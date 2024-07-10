@@ -21,11 +21,10 @@ namespace ModbusSlave
 
         #region Form
         
-        public SlaveForm()
+        public SlaveForm() : base("Modbus device", "Modbus Slave")
         {
             base.ShowDataLength = false;
             InitializeComponent();
-            this.Text += String.Format(" ({0})", Assembly.GetExecutingAssembly().GetName().Version.ToString());
         }
 
         private void SlaveFormClosing(object sender, FormClosingEventArgs e)
@@ -36,7 +35,6 @@ namespace ModbusSlave
         private void SlaveFormLoading(object sender, EventArgs e)
         {
         }
-
 
         #endregion
 

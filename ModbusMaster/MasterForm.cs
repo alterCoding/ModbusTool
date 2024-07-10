@@ -21,10 +21,9 @@ namespace ModbusMaster
 
         #region Form
 
-        public MasterForm()
+        public MasterForm() : base("Modbus scanner", "Modbus Master")
         {
             InitializeComponent();
-            this.Text += String.Format(" ({0})", Assembly.GetExecutingAssembly().GetName().Version.ToString());
         }
 
         private void MasterFormClosing(object sender, FormClosingEventArgs e)

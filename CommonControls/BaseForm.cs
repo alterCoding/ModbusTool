@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Configuration;
+using System.Reflection;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
@@ -7,7 +7,7 @@ using System.IO.Ports;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading.Tasks;
+using System.Xml.Serialization;
 using System.Windows.Forms;
 using static System.Windows.Forms.LinkLabel;
 
@@ -20,13 +20,22 @@ namespace Modbus.Common
         protected Socket _socket;
         protected readonly ushort[] _registerData;
         private bool _logPaused = false;
+        private string _wndBaseName;
+        private bool _isLoaded;
 
         #region Form 
 
-        public BaseForm()
+        public BaseForm() : this("{Modbus window}", "{Modbus app}")
+        {
+            //ctor dummy pour le designer
+        }
+
+        protected BaseForm(string wndBaseName, string appName)
         {
             InitializeComponent();
             _registerData = new ushort[65600];
+            _wndBaseName = wndBaseName;
+            txtAppVersion.Text = $"{appName} ver. {Assembly.GetExecutingAssembly().GetName().Version.ToString()}";
         }
 
         private void BaseFormLoading(object sender, EventArgs e)
@@ -41,6 +50,9 @@ namespace Modbus.Common
             LoadUserData();
             CurrentTab.DisplayFormat = DisplayFormat;
             RefreshData();
+
+            _isLoaded = true;
+            updateWindowCaption();
         }
 
         private void BaseFormClosing(object sender, FormClosingEventArgs e)
@@ -264,6 +276,8 @@ namespace Modbus.Common
         private void RadioButtonModeChanged(object sender, EventArgs e)
         {
             SetMode();
+
+            updateWindowCaption();
         }
 
         protected void SetMode()
@@ -432,23 +446,23 @@ namespace Modbus.Common
             get
             {
                 var parity = Parity.None;
-                if (comboBoxParity.SelectedItem.Equals(Parity.None.ToString()))
+                if (comboBoxParity.SelectedItem?.Equals(Parity.None.ToString()) == true)
                 {
                     parity = Parity.None;
                 }
-                else if (comboBoxParity.SelectedItem.Equals(Parity.Odd.ToString()))
+                else if (comboBoxParity.SelectedItem?.Equals(Parity.Odd.ToString()) == true)
                 {
                     parity = Parity.Odd;
                 }
-                else if (comboBoxParity.SelectedItem.Equals(Parity.Even.ToString()))
+                else if (comboBoxParity.SelectedItem?.Equals(Parity.Even.ToString()) == true)
                 {
                     parity = Parity.Even;
                 }
-                else if (comboBoxParity.SelectedItem.Equals(Parity.Mark.ToString()))
+                else if (comboBoxParity.SelectedItem?.Equals(Parity.Mark.ToString()) == true)
                 {
                     parity = Parity.Mark;
                 }
-                else if (comboBoxParity.SelectedItem.Equals(Parity.Space.ToString()))
+                else if (comboBoxParity.SelectedItem?.Equals(Parity.Space.ToString()) == true)
                 {
                     parity = Parity.Space;
                 }
@@ -464,7 +478,7 @@ namespace Modbus.Common
         {
             get
             {
-                int bits = 0;
+                int bits = 8;
                 switch (comboBoxDataBits.SelectedIndex)
                 {
                     case 0:
@@ -484,6 +498,7 @@ namespace Modbus.Common
                         comboBoxDataBits.SelectedIndex = 0;
                         break;
                     case 8:
+                    default:
                         comboBoxDataBits.SelectedIndex = 1;
                         break;
                 }
@@ -759,5 +774,126 @@ namespace Modbus.Common
             System.Diagnostics.Process.Start(url);
         }
 
+        /// <summary>
+        /// Store the current target connection parameters into a xml file
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void btnSaveComClick(object sender, EventArgs e)
+        {
+            var conf = getCurrentConfiguration();
+
+            var dlg = new SaveFileDialog();
+            dlg.FileName = "ModbusSlaveEndPoint";
+            dlg.OverwritePrompt = true;
+            dlg.Filter = "xml files (*.xml)|*.xml|All files (*.*)|*.*";
+            dlg.DefaultExt = "xml";
+            if (dlg.InitialDirectory == string.Empty) dlg.InitialDirectory = Directory.GetCurrentDirectory();
+
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            var serializer = new XmlSerializer(typeof(ModbusConnConfiguration));
+            using (var file = new StreamWriter(dlg.FileName))
+            {
+                serializer.Serialize(file, conf);
+            }
+        }
+
+        /// <summary>
+        /// Load the current target connection parameters from a xml file
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void btnLoadComClick(object sender, EventArgs e)
+        {
+            var dlg = new OpenFileDialog();
+            dlg.FileName = "ModbusSlaveEndPoint";
+            dlg.Filter = "xml files (*.xml)|*.xml|All files (*.*)|*.*";
+            if (dlg.InitialDirectory == string.Empty) dlg.InitialDirectory = Directory.GetCurrentDirectory();
+
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            var serializer = new XmlSerializer(typeof(ModbusConnConfiguration));
+            using (var file = new StreamReader(dlg.FileName))
+            {
+                var conf = serializer.Deserialize(file) as ModbusConnConfiguration;
+                if (conf.ModbusMode == CommunicationMode.TCP || conf.ModbusMode == CommunicationMode.UDP)
+                {
+                    var ip_conf = conf.TryCast<ModbusIPConfiguration>();
+                    TCPPort = ip_conf.Port;
+                    IPAddress = ip_conf.Address;
+                }
+                else if (conf.ModbusMode == CommunicationMode.RTU)
+                {
+                    var serial = conf.TryCast<ModbusRTUConfiguration>();
+                    PortName = serial.PortName;
+                    Baud = serial.BaudRate;
+                    Parity = serial.Parity;
+                    StopBits = serial.StopBits;
+                    DataBits = serial.DataBits;
+                }
+
+                CommunicationMode = conf.ModbusMode;
+                SlaveId = conf.SlaveID;
+            }
+        }
+
+        /// <summary>
+        /// Retrieve configuration object from the GUI
+        /// </summary>
+        /// <returns>null if initializing</returns>
+        protected ModbusConnConfiguration getCurrentConfiguration()
+        {
+            if (!_isLoaded) return null;
+
+            IModbusConfiguration conf = null;
+
+            if (_communicationMode == CommunicationMode.TCP)
+                conf = new ModbusTCPConfiguration() 
+                { 
+                    EndPoint = new IPEndPoint(IPAddress, TCPPort) 
+                };
+            else if (_communicationMode == CommunicationMode.RTU) 
+                conf = new ModbusRTUConfiguration() 
+                { 
+                    PortName = PortName, BaudRate = Baud, 
+                    Parity = Parity, StopBits = StopBits, DataBits = (byte)DataBits
+                };
+            else if (_communicationMode == CommunicationMode.UDP) 
+                conf = new ModbusUDPConfiguration() 
+                { 
+                    EndPoint = new IPEndPoint(IPAddress, TCPPort) 
+                };
+
+            return ModbusConnConfiguration.Create(conf, SlaveId);
+        }
+
+        protected void updateWindowCaption()
+        {
+            var conf = getCurrentConfiguration();
+            if (conf == null) return;
+
+            Text = string.Concat(_wndBaseName, " ", conf.ToString());
+        }
+
+        private void onSerialPortsTextChanged(object sender, EventArgs e)
+        {
+            updateWindowCaption();
+        }
+
+        private void onSlaveIDValidated(object sender, EventArgs e)
+        {
+            updateWindowCaption();
+        }
+
+        private void onAddressValidated(object sender, EventArgs e)
+        {
+            updateWindowCaption();
+        }
+
+        private void onIPPortValidated(object sender, EventArgs e)
+        {
+            updateWindowCaption();
+        }
     }
 }
