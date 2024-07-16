@@ -7,7 +7,7 @@ using System.IO.Ports;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading.Tasks;
+using System.Threading;
 using System.Windows.Forms;
 using static System.Windows.Forms.LinkLabel;
 
@@ -18,7 +18,16 @@ namespace Modbus.Common
         private DisplayFormat _displayFormat = DisplayFormat.Integer;
         private CommunicationMode _communicationMode = CommunicationMode.TCP;
         protected Socket _socket;
-        protected readonly ushort[] _registerData;
+        
+        /** 
+         * Helps to protect _registerData.
+         * - About master application: all requests are triggered and processed from the main thread, thus no lock is 
+         *  required
+         * - About slave application: activities are spread between main thread and each worker thread which is raised
+         * from an accepted connection
+         */
+        private object _dataLock = new object();
+        private readonly ushort[] _registerData;
         private bool _logPaused = false;
 
         #region Form 
@@ -40,7 +49,7 @@ namespace Modbus.Common
             }
             LoadUserData();
             CurrentTab.DisplayFormat = DisplayFormat;
-            RefreshData();
+            refreshData();
         }
 
         private void BaseFormClosing(object sender, FormClosingEventArgs e)
@@ -117,54 +126,68 @@ namespace Modbus.Common
             openFileDialog.Multiselect = false;
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
-                using (var s = new FileStream(openFileDialog.FileName, FileMode.Open, FileAccess.Read))
+                lock (_dataLock)
                 {
-                    using (var r = new StreamReader(s))
-                    {
-                        var rec = r.ReadToEnd();
-                        var sets = rec.Split(',');
-                        var first = true;
-                        foreach (var s1 in sets)
-                        {
-                            DisplayFormat fmt;
-                            var v = s1.Split(':');
-                            var address = int.Parse(v[0]);
-                            ushort data;
-                            if (v[1].StartsWith("0x", StringComparison.CurrentCultureIgnoreCase))
-                            {
-                                fmt = DisplayFormat.Hex;
-                                var sub = v[1].Substring(2);
-                                ushort.TryParse(sub, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out data);
-                            }
-                            else if (v[1].Length > 6) //must be binary
-                            {
-                                fmt = DisplayFormat.Binary;
-                                data = Convert.ToUInt16(v[1], 2);
-                            }
-                            else
-                            {
-                                fmt = DisplayFormat.Integer;
-                                data = Convert.ToUInt16(v[1], 10);
-                            }
-                            if (address < _registerData.Length)
-                            {
-                                _registerData[address] = data;
-                            }
-                            if (first)
-                            {
-                                SetFunction(fmt);
-                                first = false;
-                                StartAddress = UInt16.Parse(v[0]);
-                            }
-                        }
-                        r.Close();
-                        DataLength = Convert.ToUInt16(sets.Length);
-                        // display data
-                    }
-                    s.Close();
+                    importDataTable(openFileDialog.FileName);
                 }
-                RefreshData();
             }
+        }
+
+        /// <summary>
+        /// read data table from a csv file
+        /// </summary>
+        /// <param name="filepath"></param>
+        /// <remarks>PRE: lock taken</remarks>
+        private void importDataTable(string filepath)
+        {
+            using (var s = new FileStream(filepath, FileMode.Open, FileAccess.Read))
+            {
+                using (var r = new StreamReader(s))
+                {
+                    var rec = r.ReadToEnd();
+                    var sets = rec.Split(',');
+                    var first = true;
+                    foreach (var s1 in sets)
+                    {
+                        DisplayFormat fmt;
+                        var v = s1.Split(':');
+                        var address = int.Parse(v[0]);
+                        ushort data;
+                        if (v[1].StartsWith("0x", StringComparison.CurrentCultureIgnoreCase))
+                        {
+                            fmt = DisplayFormat.Hex;
+                            var sub = v[1].Substring(2);
+                            ushort.TryParse(sub, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out data);
+                        }
+                        else if (v[1].Length > 6) //must be binary
+                        {
+                            fmt = DisplayFormat.Binary;
+                            data = Convert.ToUInt16(v[1], 2);
+                        }
+                        else
+                        {
+                            fmt = DisplayFormat.Integer;
+                            data = Convert.ToUInt16(v[1], 10);
+                        }
+                        if (address < _registerData.Length)
+                        {
+                            _registerData[address] = data;
+                        }
+                        if (first)
+                        {
+                            SetFunction(fmt);
+                            first = false;
+                            StartAddress = UInt16.Parse(v[0]);
+                        }
+                    }
+                    r.Close();
+                    DataLength = Convert.ToUInt16(sets.Length);
+                    // display data
+                }
+                s.Close();
+            }
+
+            refreshData();
         }
 
         public delegate void SetFunctionDelegate(DisplayFormat log);
@@ -297,7 +320,8 @@ namespace Modbus.Common
                 {
                     DisplayFormat.TryParse(rb.Tag.ToString(), true, out _displayFormat);
                     CurrentTab.DisplayFormat = DisplayFormat;
-                    RefreshData();
+
+                    lock(_dataLock) refreshData();
                 }
             }
         }
@@ -557,7 +581,7 @@ namespace Modbus.Common
                 }
                 _displayFormat = value;
                 CurrentTab.DisplayFormat = DisplayFormat;
-                RefreshData();
+                lock(_dataLock) refreshData();
             }
         }
 
@@ -667,11 +691,14 @@ namespace Modbus.Common
 
         protected void ClearRegisterData()
         {
-            for (int i = 0; i < _registerData.Length; i++)
+            lock(_dataLock)
             {
-                _registerData[i] = 0;
+                for (int i = 0; i < _registerData.Length; i++)
+                {
+                    _registerData[i] = 0;
+                }
+                refreshData();
             }
-            RefreshData();
         }
 
         protected DataTab CurrentTab
@@ -683,11 +710,15 @@ namespace Modbus.Common
             }
         }
 
-        public void RefreshData()
+        /// <summary>
+        /// UI datatable (re)construct
+        /// </summary>
+        /// <remarks>PRE: lock taken</remarks>
+        private void refreshData()
         {
             if (InvokeRequired)
             {
-                BeginInvoke(new Action(RefreshData));
+                BeginInvoke(new Action(refreshData));
                 return;
             }
             CurrentTab.RefreshData();
@@ -697,51 +728,165 @@ namespace Modbus.Common
             CurrentTab.OnApply += dataTab_OnApply;
         }
 
-        public void UpdateDataTable()
+        /// <summary>
+        /// update UI
+        /// </summary>
+        /// <remarks>PRE: lock taken</remarks>
+        private void updateDataTable()
         {
             if (InvokeRequired)
             {
-                BeginInvoke(new Action(UpdateDataTable));
+                BeginInvoke(new Action(updateDataTable));
                 return;
             }
+
+            //note: data reference of CurrentTab points to _registerData
             CurrentTab.UpdateDataTable();
         }
+
+        /// <summary>
+        /// Get a single register from the data table
+        /// </summary>
+        /// <param name="offset"></param>
+        /// <returns>[false] addr out of bounds</returns>
+        protected bool TryGetRegister(ushort offset, out ushort value)
+        {
+            lock (_dataLock)
+            {
+                if(!tryRegAddr(offset, 1))
+                {
+                    value = 0;
+                    return false;
+                }
+                else
+                {
+                    value = _registerData[offset];
+                    return true;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Copy multiple registers from the data table
+        /// </summary>
+        /// <param name="offset"></param>
+        /// <param name="dest">target buffer</param>
+        /// <param name="count">registers count</param>
+        /// <returns>[false] addr out of bounds</returns>
+        protected bool TryGetRegisters(ushort offset, ushort[] dest, ushort count)
+        {
+            lock(_dataLock)
+            {
+                if (!tryRegAddr(offset, count)) return false;
+
+                Array.Copy(_registerData, offset, dest, 0, count);
+                return true;
+            }
+        }
+
+        private bool tryRegAddr(ushort offset, ushort count)
+        {
+            if (offset + count > _registerData.Length)
+            {
+                AppendLog($"Attempt to dereference invalid register addresses [{offset}-{offset + count - 1}] "+
+                    $"bounds:[0-{_registerData.Length - 1}");
+
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Update a single register to the data table
+        /// </summary>
+        /// <param name="offset"></param>
+        /// <param name="src"></param>
+        /// <param name="update">update the UI data table</param>
+        /// <returns>[false] addr out of bounds</returns>
+        /// <remarks>Should be the main use case (as the sole writing originator is the end user and the gui) but 
+        /// the application architecture seems to prefer to update the whole data table of the active tab</remarks>
+        protected bool TryPutRegister(ushort offset, ushort src, bool update)
+        {
+            lock(_dataLock)
+            {
+                if (!tryRegAddr(offset, 1)) return false;
+
+                _registerData[offset] = src; 
+
+                if (update) updateDataTable();
+
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Update multiple registers to the data table
+        /// </summary>
+        /// <param name="offset"></param>
+        /// <param name="src">src.Length registers will be written</param>
+        /// <param name="update">update the UI data table</param>
+        /// <returns>[false] addr out of bounds</returns>
+        protected bool TryPutRegisters(ushort offset, ushort[] src, bool update)
+        {
+            lock(_dataLock)
+            {
+                if (!tryRegAddr(offset, (ushort)src.Length)) return false;
+
+                src.CopyTo(_registerData, offset);
+
+                if (update) updateDataTable();
+
+                return true;
+            }
+        }
+
+        protected void Synchronize(DataTab tab)
+        {
+            tab.SetSynchronize(enterLockData, releaseLockData);
+        }
+
+        private void enterLockData() { Monitor.Enter(_dataLock); }
+        private void releaseLockData() { Monitor.Exit(_dataLock); }
 
         #endregion
 
         private void tabControl1_Selected(object sender, TabControlEventArgs e)
         {
-            CurrentTab.RegisterData = _registerData;
-            CurrentTab.DisplayFormat = DisplayFormat;
-            var tab = tabControl1.SelectedTab;
-            if (tab.Text.Equals("...") && tabControl1.TabPages.Count < 20)
+            lock (_dataLock)
             {
-                DataTab dataTab = new DataTab();
-                dataTab.DataLength = 256;
-                dataTab.DisplayFormat = DisplayFormat.Integer;
-                dataTab.Location = new Point(3, 3);
-                dataTab.Name = "dataTab" + (tabControl1.TabPages.Count + 1);
-                dataTab.RegisterData = _registerData;
-                dataTab.ShowDataLength = ShowDataLength;
-                dataTab.Size = new Size(839, 406);
-                dataTab.StartAddress = 0;
-                dataTab.TabIndex = 0;
-                dataTab.OnApply += dataTab_OnApply;
-                TabPage tabPage = new TabPage();
-                tabPage.Controls.Add(dataTab);
-                tabPage.Location = new Point(4, 22);
-                tabPage.Name = "tabPage" + (tabControl1.TabPages.Count + 1);
-                tabPage.Padding = new Padding(3);
-                tabPage.Size = new Size(851, 411);
-                tabPage.TabIndex = tabControl1.TabPages.Count;
-                tabPage.Text = "...";
-                tabPage.UseVisualStyleBackColor = true;
-                tabControl1.Controls.Add(tabPage);
+                CurrentTab.RegisterData = _registerData;
+                CurrentTab.DisplayFormat = DisplayFormat;
+                var tab = tabControl1.SelectedTab;
+                if (tab.Text.Equals("...") && tabControl1.TabPages.Count < 20)
+                {
+                    DataTab dataTab = new DataTab();
+                    dataTab.DataLength = 256;
+                    dataTab.DisplayFormat = DisplayFormat.Integer;
+                    dataTab.Location = new Point(3, 3);
+                    dataTab.Name = "dataTab" + (tabControl1.TabPages.Count + 1);
+                    dataTab.RegisterData = _registerData;
+                    dataTab.ShowDataLength = ShowDataLength;
+                    dataTab.Size = new Size(839, 406);
+                    dataTab.StartAddress = 0;
+                    dataTab.TabIndex = 0;
+                    dataTab.OnApply += dataTab_OnApply;
+                    TabPage tabPage = new TabPage();
+                    tabPage.Controls.Add(dataTab);
+                    tabPage.Location = new Point(4, 22);
+                    tabPage.Name = "tabPage" + (tabControl1.TabPages.Count + 1);
+                    tabPage.Padding = new Padding(3);
+                    tabPage.Size = new Size(851, 411);
+                    tabPage.TabIndex = tabControl1.TabPages.Count;
+                    tabPage.Text = "...";
+                    tabPage.UseVisualStyleBackColor = true;
+                    tabControl1.Controls.Add(tabPage);
+                }
+                var address = CurrentTab.StartAddress;
+                tab.Text = address.ToString();
+                _startAddress = address;
+                _dataLength = CurrentTab.DataLength;
             }
-            var address = CurrentTab.StartAddress;
-            tab.Text = address.ToString();
-            _startAddress = address;
-            _dataLength = CurrentTab.DataLength;
         }
 
         void dataTab_OnApply(object sender, EventArgs e)

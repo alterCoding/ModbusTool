@@ -10,6 +10,13 @@ using ModbusLib.Protocols;
 
 namespace ModbusMaster
 {
+    /// <summary>
+    /// </summary>
+    /// <remarks>
+    /// Architecture communication is very basic. It's a single-threaded application (main). All the modbus
+    /// single commands, but also the polling (if any) are processed into the window loop (thus the main thread). As a
+    /// result, the shared registers map is not synchronized
+    /// </remarks>
     public partial class MasterForm : BaseForm
     {
         private int _transactionId;
@@ -154,9 +161,10 @@ namespace ModbusMaster
                 var result = _driver.ExecuteGeneric(_portClient, command);
                 if (result.Status == CommResponse.Ack)
                 {
-                    command.Data.CopyTo(_registerData, StartAddress);
-                    UpdateDataTable();
                     AppendLog(String.Format("Read succeeded: Function code:{0}.", function));
+
+                    if (TryPutRegisters(StartAddress, command.Data, update: true) == false)
+                        throw new InvalidOperationException("Invalid ModbusCommand read object");
                 }
                 else
                 {
@@ -180,15 +188,10 @@ namespace ModbusMaster
                                       TransId = _transactionId++,
                                       Data = new ushort[DataLength]
                                   };
-                for (int i = 0; i < DataLength; i++)
-                {
-                    var index = StartAddress + i;
-                    if (index > _registerData.Length)
-                    {
-                        break;
-                    }
-                    command.Data[i] = _registerData[index];
-                }
+
+                if (TryGetRegisters(StartAddress, command.Data, DataLength) == false)
+                    throw new InvalidOperationException("Invalid ModbusCommand write object");
+
                 var result = _driver.ExecuteGeneric(_portClient, command);
                 AppendLog(result.Status == CommResponse.Ack
                               ? String.Format("Write succeeded: Function code:{0}", function)
@@ -212,7 +215,12 @@ namespace ModbusMaster
                     TransId = _transactionId++,
                     Data = new ushort[1]
                 };
-                command.Data[0] = (ushort)(_registerData[StartAddress] & 0x0100);
+
+                if (TryGetRegister(StartAddress, out command.Data[0]) == false)
+                    throw new InvalidOperationException("Invalid ModbusCommand write object");
+                else
+                    command.Data[0] &= 0x0100;
+
                 var result = _driver.ExecuteGeneric(_portClient, command);
                 AppendLog(result.Status == CommResponse.Ack
                               ? String.Format("Write succeeded: Function code:{0}", ModbusCommand.FuncWriteCoil)
