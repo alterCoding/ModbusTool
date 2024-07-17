@@ -47,6 +47,8 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AppOptions.cs" />
+    <Compile Include="CommandLineParsing.cs" />
     <Compile Include="DataTab.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -54,6 +56,7 @@
       <DependentUpon>DataTab.cs</DependentUpon>
     </Compile>
     <Compile Include="Enumerations.cs" />
+    <Compile Include="GlobalExceptionHandling.cs" />
     <Compile Include="LedBulb.cs">
       <SubType>Component</SubType>
     </Compile>
@@ -77,6 +80,7 @@
     <Compile Include="TabControlEx.cs">
       <SubType>Component</SubType>
     </Compile>
+    <Compile Include="ConnConfiguration.cs" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="BaseForm.resx">

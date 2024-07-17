@@ -1,7 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Windows.Forms;
+using Modbus.Common;
 
 namespace ModbusMaster
 {
@@ -15,7 +14,11 @@ namespace ModbusMaster
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MasterForm());
+
+            _ = GlobalExceptionHandling._once;
+
+            var options = AppOptions.FromCommandLine();
+            Application.Run(new MasterForm(options));
         }
     }
 }

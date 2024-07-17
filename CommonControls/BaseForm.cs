@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Configuration;
+using System.Reflection;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
@@ -7,12 +7,24 @@ using System.IO.Ports;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading;
+using System.Xml.Serialization;
 using System.Windows.Forms;
 using static System.Windows.Forms.LinkLabel;
+using System.Threading;
 
 namespace Modbus.Common
 {
+    [Flags]
+    public enum BusState : short
+    {
+        undefined = 0,
+        off = 0x1,
+        on = 0x2,
+        error = unchecked((short)0x8000),
+        errorActive = on | error,
+        errorPassive = off | error
+    }
+
     public partial class BaseForm : Form
     {
         private DisplayFormat _displayFormat = DisplayFormat.Integer;
@@ -28,14 +40,58 @@ namespace Modbus.Common
          */
         private object _dataLock = new object();
         private readonly ushort[] _registerData;
+
         private bool _logPaused = false;
+
+        /** prefix for main window caption */
+        private string _wndBaseName;
+
+        /** dirty trick about property changes topic*/
+        private bool _isLoaded;
+
+        private AppOptions m_options = new AppOptions();
+
+        /** cache the communication state*/
+        private BusState m_connState;
+        private object m_stateLock = new object();
+
+        /// <summary>
+        /// Wrap some instance methods into a delegate
+        /// </summary>
+        /// <remarks>micro opt w/o doubt: just for avoid to instantiate delegate each time</remarks>
+        private class Callers
+        {
+            public Callers(BaseForm self)
+            {
+                _appendLog = self.AppendLog;
+                _setBusState = self.SetBusState;
+                _updateDataTable = self.updateDataTable;
+            }
+            public readonly Action<string> _appendLog;
+            public readonly Action<BusState> _setBusState;
+            public readonly Action _updateDataTable;
+        }
+
+        private readonly Callers _call;
 
         #region Form 
 
-        public BaseForm()
+        public BaseForm() : this("{Modbus window}", "{Modbus app}")
         {
+            //dumyy ctor dummy for the designer
+        }
+
+        protected BaseForm(string wndBaseName, string appName, AppOptions options = null)
+        {
+            m_options = options ?? new AppOptions();
+
             InitializeComponent();
             _registerData = new ushort[65600];
+
+            _wndBaseName = wndBaseName;
+            txtAppVersion.Text = $"{appName} ver. {Assembly.GetExecutingAssembly().GetName().Version.ToString()}";
+
+            _call = new Callers(this);
         }
 
         private void BaseFormLoading(object sender, EventArgs e)
@@ -50,6 +106,52 @@ namespace Modbus.Common
             LoadUserData();
             CurrentTab.DisplayFormat = DisplayFormat;
             refreshData();
+
+            //if options plan a target endpoint specification to be used, .... we use it -------------
+
+            var endpoint = m_options.EndPointFilePath;
+            if (string.IsNullOrWhiteSpace(endpoint) == false)
+            {
+                if (!File.Exists(endpoint))
+                {
+                    AppendLog($"[Warn] Unable to read device endpoint from file '{endpoint}'. File not found");
+                    MessageBox.Show($"File '{endpoint}' is not found", "Initialization error !");
+                }
+                else
+                {
+                    loadCommunicationSpec(m_options.EndPointFilePath);
+                }
+            }
+
+            //if options plan a data table, we load it. ------------------
+
+            var dtable = m_options.DataTableFilePath;
+            if(string.IsNullOrWhiteSpace(dtable) == false)
+            {
+                if (!File.Exists(dtable))
+                {
+                    AppendLog($"[Warn] Unable to read input data table from file '{dtable}'. File not found");
+                    MessageBox.Show($"File '{dtable}' is not found", "Initialization error !");
+                }
+                else
+                {
+                    importDataTable(dtable);
+                }
+            }
+
+            _isLoaded = true;
+            m_connState = BusState.off;
+            updateWindowCaption();
+
+            //if options plan an immediate communication, we actually bind the modbus server (when application is a 
+            //a device slave) or start the scan (when application is a device master) ----------------
+
+            if (m_options.AutoStart)
+            {
+                AppendLog("[Info] Autostart has been requested");
+                //virtual-call
+                StartCommunication();
+            }
         }
 
         private void BaseFormClosing(object sender, FormClosingEventArgs e)
@@ -187,6 +289,7 @@ namespace Modbus.Common
                 s.Close();
             }
 
+            AppendLog($"[Info] a data table has been loaded from '{filepath}'");
             refreshData();
         }
 
@@ -287,6 +390,8 @@ namespace Modbus.Common
         private void RadioButtonModeChanged(object sender, EventArgs e)
         {
             SetMode();
+
+            updateWindowCaption();
         }
 
         protected void SetMode()
@@ -456,23 +561,23 @@ namespace Modbus.Common
             get
             {
                 var parity = Parity.None;
-                if (comboBoxParity.SelectedItem.Equals(Parity.None.ToString()))
+                if (comboBoxParity.SelectedItem?.Equals(Parity.None.ToString()) == true)
                 {
                     parity = Parity.None;
                 }
-                else if (comboBoxParity.SelectedItem.Equals(Parity.Odd.ToString()))
+                else if (comboBoxParity.SelectedItem?.Equals(Parity.Odd.ToString()) == true)
                 {
                     parity = Parity.Odd;
                 }
-                else if (comboBoxParity.SelectedItem.Equals(Parity.Even.ToString()))
+                else if (comboBoxParity.SelectedItem?.Equals(Parity.Even.ToString()) == true)
                 {
                     parity = Parity.Even;
                 }
-                else if (comboBoxParity.SelectedItem.Equals(Parity.Mark.ToString()))
+                else if (comboBoxParity.SelectedItem?.Equals(Parity.Mark.ToString()) == true)
                 {
                     parity = Parity.Mark;
                 }
-                else if (comboBoxParity.SelectedItem.Equals(Parity.Space.ToString()))
+                else if (comboBoxParity.SelectedItem?.Equals(Parity.Space.ToString()) == true)
                 {
                     parity = Parity.Space;
                 }
@@ -488,7 +593,7 @@ namespace Modbus.Common
         {
             get
             {
-                int bits = 0;
+                int bits = 8;
                 switch (comboBoxDataBits.SelectedIndex)
                 {
                     case 0:
@@ -508,6 +613,7 @@ namespace Modbus.Common
                         comboBoxDataBits.SelectedIndex = 0;
                         break;
                     case 8:
+                    default:
                         comboBoxDataBits.SelectedIndex = 1;
                         break;
                 }
@@ -651,7 +757,7 @@ namespace Modbus.Common
             {
                 hex.AppendFormat("{0:x2} ", data[i]);
             }
-            AppendLog(String.Format("RX: {0}", hex));
+            AppendLog(String.Format("[activity.rx] {0}", hex));
         }
 
         protected void DriverOutgoingData(byte[] data)
@@ -661,7 +767,7 @@ namespace Modbus.Common
             var hex = new StringBuilder(data.Length * 2);
             foreach (byte b in data)
                 hex.AppendFormat("{0:x2} ", b);
-            AppendLog(String.Format("TX: {0}", hex));
+            AppendLog(String.Format("[activity.tx] {0}", hex));
         }
 
         protected void AppendLog(String log)
@@ -670,7 +776,7 @@ namespace Modbus.Common
                 return;
             if (InvokeRequired)
             {
-                BeginInvoke(new AppendLogDelegate(AppendLog), new object[] { log });
+                BeginInvoke(_call._appendLog, log);
                 return;
             }
             var now = DateTime.Now;
@@ -736,7 +842,7 @@ namespace Modbus.Common
         {
             if (InvokeRequired)
             {
-                BeginInvoke(new Action(updateDataTable));
+                BeginInvoke(_call._updateDataTable);
                 return;
             }
 
@@ -904,5 +1010,219 @@ namespace Modbus.Common
             System.Diagnostics.Process.Start(url);
         }
 
+        #region connection persistence and management
+
+        /// <summary>
+        /// Store the current target connection parameters into a xml file
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void btnSaveComClick(object sender, EventArgs e)
+        {
+            var conf = getCurrentConfiguration();
+
+            var dlg = new SaveFileDialog();
+            dlg.FileName = "ModbusSlaveEndPoint";
+            dlg.OverwritePrompt = true;
+            dlg.Filter = "xml files (*.xml)|*.xml|All files (*.*)|*.*";
+            dlg.DefaultExt = "xml";
+            if (dlg.InitialDirectory == string.Empty) dlg.InitialDirectory = Directory.GetCurrentDirectory();
+
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            var serializer = new XmlSerializer(typeof(ModbusConnConfiguration));
+            using (var file = new StreamWriter(dlg.FileName))
+            {
+                serializer.Serialize(file, conf);
+            }
+        }
+
+        /// <summary>
+        /// Load the current target connection parameters from a xml file
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void btnLoadComClick(object sender, EventArgs e)
+        {
+            var dlg = new OpenFileDialog();
+            dlg.FileName = "ModbusSlaveEndPoint";
+            dlg.Filter = "xml files (*.xml)|*.xml|All files (*.*)|*.*";
+            if (dlg.InitialDirectory == string.Empty) dlg.InitialDirectory = Directory.GetCurrentDirectory();
+
+            if (dlg.ShowDialog() == DialogResult.OK) loadCommunicationSpec(dlg.FileName);
+        }
+
+        /// <summary>
+        /// load from the supplied file, the slave device connection modbus parameters
+        /// </summary>
+        /// <param name="filepath">xml file path</param>
+        private void loadCommunicationSpec(string filepath)
+        {
+            var serializer = new XmlSerializer(typeof(ModbusConnConfiguration));
+            using (var file = new StreamReader(filepath))
+            {
+                var conf = serializer.Deserialize(file) as ModbusConnConfiguration;
+                if (conf.ModbusMode == CommunicationMode.TCP || conf.ModbusMode == CommunicationMode.UDP)
+                {
+                    var ip_conf = conf.TryCast<ModbusIPConfiguration>();
+                    TCPPort = ip_conf.Port;
+                    IPAddress = ip_conf.Address;
+                }
+                else if (conf.ModbusMode == CommunicationMode.RTU)
+                {
+                    var serial = conf.TryCast<ModbusRTUConfiguration>();
+                    PortName = serial.PortName;
+                    Baud = serial.BaudRate;
+                    Parity = serial.Parity;
+                    StopBits = serial.StopBits;
+                    DataBits = serial.DataBits;
+                }
+
+                CommunicationMode = conf.ModbusMode;
+                SlaveId = conf.SlaveID;
+            }
+
+            AppendLog($"[Info] Device endpoint has been loaded from file '{filepath}'");
+        }
+        
+        /// <summary>
+        /// Retrieve configuration object from the GUI
+        /// </summary>
+        /// <returns>null if initializing</returns>
+        private ModbusConnConfiguration getCurrentConfiguration()
+        {
+            if (!_isLoaded) return null;
+
+            IModbusConfiguration conf = null;
+
+            if (_communicationMode == CommunicationMode.TCP)
+                conf = new ModbusTCPConfiguration() 
+                { 
+                    EndPoint = new IPEndPoint(IPAddress, TCPPort) 
+                };
+            else if (_communicationMode == CommunicationMode.RTU) 
+                conf = new ModbusRTUConfiguration() 
+                { 
+                    PortName = PortName, BaudRate = Baud, 
+                    Parity = Parity, StopBits = StopBits, DataBits = (byte)DataBits
+                };
+            else if (_communicationMode == CommunicationMode.UDP) 
+                conf = new ModbusUDPConfiguration() 
+                { 
+                    EndPoint = new IPEndPoint(IPAddress, TCPPort) 
+                };
+
+            return ModbusConnConfiguration.Create(conf, SlaveId);
+        }
+
+        /// <summary>
+        /// </summary>
+        /// <remarks>Override to effectively start the bus</remarks>
+        protected virtual void StartCommunication() { }
+
+        /// <summary>
+        /// Update connected/disconnected state and GUI
+        /// </summary>
+        /// <param name="state"></param>
+        /// <remarks>Must be executed in main thread (UI)</remarks>
+        protected void SetBusState(BusState state)
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(_call._setBusState, state);
+                return;
+            }
+
+            lock(m_stateLock) DoSetBusState(state);
+        }
+ 
+        /// <summary>
+        /// Actually update connected/disconnected state and GUI
+        /// </summary>
+        /// <param name="state"></param>
+        /// <remarks>Do not forget to call the base class when overriden<br/>
+        /// This method is an implementation method and must not be called directy (use <see cref="SetBusState(BusState)"/><br/>
+        /// @pre lock is held
+        /// </remarks>
+        protected virtual void DoSetBusState(BusState state)
+        {
+            if (m_connState == BusState.off)
+            {
+                //direct transition from OFF to ErrorPassive does not make sense
+                if (!state.HasFlag(BusState.error))
+                    m_connState = state;
+            }
+            else
+            {
+                if(m_connState.HasFlag(BusState.on) && state == BusState.off)
+                {
+                    AppendLog("Disconnected");
+                }
+
+                m_connState = state;
+            }
+
+            if (state.HasFlag(BusState.on))
+            {
+                groupBoxTCP.Enabled = false;
+                groupBoxRTU.Enabled = false;
+                groupBoxMode.Enabled = false;
+                grpExchange.Enabled = false;
+                grpStart.Enabled = false;
+            }
+            else
+            {
+                groupBoxMode.Enabled = true;
+                grpExchange.Enabled = true;
+                grpStart.Enabled = true;
+
+                SetMode();
+            }
+
+            updateWindowCaption();
+        }
+
+        /// <summary>
+        /// Appends error log and updates bus state
+        /// </summary>
+        /// <param name="message"></param>
+        /// <param name="passive">critical error</param>
+        protected void SetError(string message, bool passive = false)
+        {
+            AppendLog($"[error] {message}");
+
+            if(passive) SetBusState(BusState.errorPassive);
+            else SetBusState(m_connState | BusState.error);
+        }
+
+        #endregion
+
+        private void updateWindowCaption()
+        {
+            var conf = getCurrentConfiguration();
+            if (conf == null) return;
+
+            Text = string.Concat(_wndBaseName, " ", conf.ToString(), $" [bus:{m_connState.ToString()}]");
+        }
+
+        private void onSerialPortsTextChanged(object sender, EventArgs e)
+        {
+            updateWindowCaption();
+        }
+
+        private void onSlaveIDValidated(object sender, EventArgs e)
+        {
+            updateWindowCaption();
+        }
+
+        private void onAddressValidated(object sender, EventArgs e)
+        {
+            updateWindowCaption();
+        }
+
+        private void onIPPortValidated(object sender, EventArgs e)
+        {
+            updateWindowCaption();
+        }
     }
 }

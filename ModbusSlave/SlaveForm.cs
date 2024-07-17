@@ -1,8 +1,9 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.IO.Ports;
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Threading;
 using System.Windows.Forms;
 using Modbus.Common;
@@ -20,20 +21,25 @@ namespace ModbusSlave
     /// </remarks>
     public partial class SlaveForm : BaseForm
     {
-                    
         private Function _function = Function.HoldingRegister;
         private ICommServer _listener;
         private SerialPort _uart;
+
         private Thread _thread;
         private volatile bool _cancel;
 
         #region Form
         
-        public SlaveForm()
+        /// <summary>
+        /// stupid constructor to satisfy the win.forms designer
+        /// </summary>
+        public SlaveForm() : this(null) { }
+
+        public SlaveForm(AppOptions options)
+            : base("Modbus device", "Modbus Slave", options)
         {
             base.ShowDataLength = false;
             InitializeComponent();
-            this.Text += String.Format(" ({0})", Assembly.GetExecutingAssembly().GetName().Version.ToString());
         }
 
         private void SlaveFormClosing(object sender, FormClosingEventArgs e)
@@ -116,15 +122,32 @@ namespace ModbusSlave
             }
             catch (Exception ex)
             {
-                AppendLog(ex.Message);
+                SetError(ex.Message, passive:true);
                 return;
             }
-            btnConnect.Enabled = false;
-            buttonDisconnect.Enabled = true;
-            grpExchange.Enabled = true;
-            groupBoxTCP.Enabled = false;
-            groupBoxRTU.Enabled = false;
-            groupBoxMode.Enabled = false;
+
+            SetBusState(BusState.on);
+        }
+
+        protected override void StartCommunication()
+        {
+            BtnConnectClick(this, EventArgs.Empty);
+        }
+
+        protected override void DoSetBusState(BusState state)
+        {
+            base.DoSetBusState(state);
+
+            if(state.HasFlag(BusState.on))
+            {
+                btnConnect.Enabled = false;
+                buttonDisconnect.Enabled = true;
+            }
+            else
+            {
+                btnConnect.Enabled = true;
+                buttonDisconnect.Enabled = false;
+            }
         }
 
         /// <summary>
@@ -149,20 +172,14 @@ namespace ModbusSlave
             }
             catch (Exception ex)
             {
-                String msg = ex.Message;
+                if(!_cancel) SetError(ex.Message, passive:true);
+                else SetBusState(BusState.errorPassive);
             }
-
         }
 
         private void ButtonDisconnectClick(object sender, EventArgs e)
         {
             DoDisconnect();
-            btnConnect.Enabled = true;
-            buttonDisconnect.Enabled = false;
-            grpExchange.Enabled = true;
-            groupBoxMode.Enabled = true;
-            SetMode();
-            AppendLog("Disconnected");
         }
 
         private void DoDisconnect()
@@ -200,6 +217,8 @@ namespace ModbusSlave
                 _socket.Dispose();
                 _socket = null;
             }
+
+            SetBusState(BusState.off);
         }
 
         #endregion
@@ -230,7 +249,7 @@ namespace ModbusSlave
                     DoWrite(command);
                     break;
                 default:
-                    AppendLog(String.Format("Illegal Function, expecting function code {0}.", command.FunctionCode));
+                    SetError($"[activity] Unsupported function: {command.FunctionCode}");
                     //return an exception
                     command.ExceptionCode = ModbusCommand.ErrorIllegalFunction;
                     break;
@@ -248,7 +267,7 @@ namespace ModbusSlave
             if(success == false)
                 command.ExceptionCode = ModbusCommand.ErrorIllegalDataAddress;
             else
-                AppendLog(String.Format("Sent data: Function code:{0}.", command.FunctionCode));
+                AppendLog($"[activity.tx] {command.Caption()}");
         }
 
         /// <summary>
@@ -261,7 +280,7 @@ namespace ModbusSlave
             if (dataAddress < StartAddress || dataAddress > StartAddress + DataLength)
             {
                 AppendLog(String.Format("Received address is not within viewable range, Received address:{0}.", dataAddress));
-                command.ExceptionCode = ModbusCommand.ErrorIllegalDataAddress;
+                command.ExceptionCode = ModbusCommand.ErrorSlaveDeviceBusy;
                 return;
             }
 
@@ -271,7 +290,7 @@ namespace ModbusSlave
                 return;
             }
 
-            AppendLog(String.Format("Received data: Function code:{0}.", command.FunctionCode));
+            AppendLog($"[activity.rx] {command.Caption()}");
         }
 
         #endregion
