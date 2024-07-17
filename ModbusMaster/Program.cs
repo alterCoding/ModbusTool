@@ -14,9 +14,11 @@ namespace ModbusMaster
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+
             _ = GlobalExceptionHandling._once;
-            
-            Application.Run(new MasterForm());
+
+            var options = AppOptions.FromCommandLine();
+            Application.Run(new MasterForm(options));
         }
     }
 }

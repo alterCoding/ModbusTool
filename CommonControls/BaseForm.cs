@@ -10,32 +10,88 @@ using System.Text;
 using System.Xml.Serialization;
 using System.Windows.Forms;
 using static System.Windows.Forms.LinkLabel;
+using System.Threading;
 
 namespace Modbus.Common
 {
+    [Flags]
+    public enum BusState : short
+    {
+        undefined = 0,
+        off = 0x1,
+        on = 0x2,
+        error = unchecked((short)0x8000),
+        errorActive = on | error,
+        errorPassive = off | error
+    }
+
     public partial class BaseForm : Form
     {
         private DisplayFormat _displayFormat = DisplayFormat.Integer;
         private CommunicationMode _communicationMode = CommunicationMode.TCP;
         protected Socket _socket;
-        protected readonly ushort[] _registerData;
+        
+        /** 
+         * Helps to protect _registerData.
+         * - About master application: all requests are triggered and processed from the main thread, thus no lock is 
+         *  required
+         * - About slave application: activities are spread between main thread and each worker thread which is raised
+         * from an accepted connection
+         */
+        private object _dataLock = new object();
+        private readonly ushort[] _registerData;
+
         private bool _logPaused = false;
+
+        /** prefix for main window caption */
         private string _wndBaseName;
+
+        /** dirty trick about property changes topic*/
         private bool _isLoaded;
+
+        private AppOptions m_options = new AppOptions();
+
+        /** cache the communication state*/
+        private BusState m_connState;
+        private object m_stateLock = new object();
+
+        /// <summary>
+        /// Wrap some instance methods into a delegate
+        /// </summary>
+        /// <remarks>micro opt w/o doubt: just for avoid to instantiate delegate each time</remarks>
+        private class Callers
+        {
+            public Callers(BaseForm self)
+            {
+                _appendLog = self.AppendLog;
+                _setBusState = self.SetBusState;
+                _updateDataTable = self.updateDataTable;
+            }
+            public readonly Action<string> _appendLog;
+            public readonly Action<BusState> _setBusState;
+            public readonly Action _updateDataTable;
+        }
+
+        private readonly Callers _call;
 
         #region Form 
 
         public BaseForm() : this("{Modbus window}", "{Modbus app}")
         {
-            //ctor dummy pour le designer
+            //dumyy ctor dummy for the designer
         }
 
-        protected BaseForm(string wndBaseName, string appName)
+        protected BaseForm(string wndBaseName, string appName, AppOptions options = null)
         {
+            m_options = options ?? new AppOptions();
+
             InitializeComponent();
             _registerData = new ushort[65600];
+
             _wndBaseName = wndBaseName;
             txtAppVersion.Text = $"{appName} ver. {Assembly.GetExecutingAssembly().GetName().Version.ToString()}";
+
+            _call = new Callers(this);
         }
 
         private void BaseFormLoading(object sender, EventArgs e)
@@ -49,10 +105,53 @@ namespace Modbus.Common
             }
             LoadUserData();
             CurrentTab.DisplayFormat = DisplayFormat;
-            RefreshData();
+            refreshData();
+
+            //if options plan a target endpoint specification to be used, .... we use it -------------
+
+            var endpoint = m_options.EndPointFilePath;
+            if (string.IsNullOrWhiteSpace(endpoint) == false)
+            {
+                if (!File.Exists(endpoint))
+                {
+                    AppendLog($"[Warn] Unable to read device endpoint from file '{endpoint}'. File not found");
+                    MessageBox.Show($"File '{endpoint}' is not found", "Initialization error !");
+                }
+                else
+                {
+                    loadCommunicationSpec(m_options.EndPointFilePath);
+                }
+            }
+
+            //if options plan a data table, we load it. ------------------
+
+            var dtable = m_options.DataTableFilePath;
+            if(string.IsNullOrWhiteSpace(dtable) == false)
+            {
+                if (!File.Exists(dtable))
+                {
+                    AppendLog($"[Warn] Unable to read input data table from file '{dtable}'. File not found");
+                    MessageBox.Show($"File '{dtable}' is not found", "Initialization error !");
+                }
+                else
+                {
+                    importDataTable(dtable);
+                }
+            }
 
             _isLoaded = true;
+            m_connState = BusState.off;
             updateWindowCaption();
+
+            //if options plan an immediate communication, we actually bind the modbus server (when application is a 
+            //a device slave) or start the scan (when application is a device master) ----------------
+
+            if (m_options.AutoStart)
+            {
+                AppendLog("[Info] Autostart has been requested");
+                //virtual-call
+                StartCommunication();
+            }
         }
 
         private void BaseFormClosing(object sender, FormClosingEventArgs e)
@@ -122,6 +221,7 @@ namespace Modbus.Common
 
         #region Import - Export
 
+
         private void ButtonImportClick(object sender, EventArgs e)
         {
             openFileDialog.AddExtension = true;
@@ -129,54 +229,69 @@ namespace Modbus.Common
             openFileDialog.Multiselect = false;
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
-                using (var s = new FileStream(openFileDialog.FileName, FileMode.Open, FileAccess.Read))
+                lock (_dataLock)
                 {
-                    using (var r = new StreamReader(s))
-                    {
-                        var rec = r.ReadToEnd();
-                        var sets = rec.Split(',');
-                        var first = true;
-                        foreach (var s1 in sets)
-                        {
-                            DisplayFormat fmt;
-                            var v = s1.Split(':');
-                            var address = int.Parse(v[0]);
-                            ushort data;
-                            if (v[1].StartsWith("0x", StringComparison.CurrentCultureIgnoreCase))
-                            {
-                                fmt = DisplayFormat.Hex;
-                                var sub = v[1].Substring(2);
-                                ushort.TryParse(sub, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out data);
-                            }
-                            else if (v[1].Length > 6) //must be binary
-                            {
-                                fmt = DisplayFormat.Binary;
-                                data = Convert.ToUInt16(v[1], 2);
-                            }
-                            else
-                            {
-                                fmt = DisplayFormat.Integer;
-                                data = Convert.ToUInt16(v[1], 10);
-                            }
-                            if (address < _registerData.Length)
-                            {
-                                _registerData[address] = data;
-                            }
-                            if (first)
-                            {
-                                SetFunction(fmt);
-                                first = false;
-                                StartAddress = UInt16.Parse(v[0]);
-                            }
-                        }
-                        r.Close();
-                        DataLength = Convert.ToUInt16(sets.Length);
-                        // display data
-                    }
-                    s.Close();
+                    importDataTable(openFileDialog.FileName);
                 }
-                RefreshData();
             }
+        }
+
+        /// <summary>
+        /// read data table from a csv file
+        /// </summary>
+        /// <param name="filepath"></param>
+        /// <remarks>PRE: lock taken</remarks>
+        private void importDataTable(string filepath)
+        {
+            using (var s = new FileStream(filepath, FileMode.Open, FileAccess.Read))
+            {
+                using (var r = new StreamReader(s))
+                {
+                    var rec = r.ReadToEnd();
+                    var sets = rec.Split(',');
+                    var first = true;
+                    foreach (var s1 in sets)
+                    {
+                        DisplayFormat fmt;
+                        var v = s1.Split(':');
+                        var address = int.Parse(v[0]);
+                        ushort data;
+                        if (v[1].StartsWith("0x", StringComparison.CurrentCultureIgnoreCase))
+                        {
+                            fmt = DisplayFormat.Hex;
+                            var sub = v[1].Substring(2);
+                            ushort.TryParse(sub, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out data);
+                        }
+                        else if (v[1].Length > 6) //must be binary
+                        {
+                            fmt = DisplayFormat.Binary;
+                            data = Convert.ToUInt16(v[1], 2);
+                        }
+                        else
+                        {
+                            fmt = DisplayFormat.Integer;
+                            data = Convert.ToUInt16(v[1], 10);
+                        }
+                        if (address < _registerData.Length)
+                        {
+                            _registerData[address] = data;
+                        }
+                        if (first)
+                        {
+                            SetFunction(fmt);
+                            first = false;
+                            StartAddress = UInt16.Parse(v[0]);
+                        }
+                    }
+                    r.Close();
+                    DataLength = Convert.ToUInt16(sets.Length);
+                    // display data
+                }
+                s.Close();
+            }
+
+            AppendLog($"[Info] a data table has been loaded from '{filepath}'");
+            refreshData();
         }
 
         public delegate void SetFunctionDelegate(DisplayFormat log);
@@ -311,7 +426,8 @@ namespace Modbus.Common
                 {
                     DisplayFormat.TryParse(rb.Tag.ToString(), true, out _displayFormat);
                     CurrentTab.DisplayFormat = DisplayFormat;
-                    RefreshData();
+
+                    lock(_dataLock) refreshData();
                 }
             }
         }
@@ -572,7 +688,7 @@ namespace Modbus.Common
                 }
                 _displayFormat = value;
                 CurrentTab.DisplayFormat = DisplayFormat;
-                RefreshData();
+                lock(_dataLock) refreshData();
             }
         }
 
@@ -642,7 +758,7 @@ namespace Modbus.Common
             {
                 hex.AppendFormat("{0:x2} ", data[i]);
             }
-            AppendLog(String.Format("RX: {0}", hex));
+            AppendLog(String.Format("[activity.rx] {0}", hex));
         }
 
         protected void DriverOutgoingData(byte[] data)
@@ -652,7 +768,7 @@ namespace Modbus.Common
             var hex = new StringBuilder(data.Length * 2);
             foreach (byte b in data)
                 hex.AppendFormat("{0:x2} ", b);
-            AppendLog(String.Format("TX: {0}", hex));
+            AppendLog(String.Format("[activity.tx] {0}", hex));
         }
 
         protected void AppendLog(String log)
@@ -661,7 +777,7 @@ namespace Modbus.Common
                 return;
             if (InvokeRequired)
             {
-                BeginInvoke(new AppendLogDelegate(AppendLog), new object[] { log });
+                BeginInvoke(_call._appendLog, log);
                 return;
             }
             var now = DateTime.Now;
@@ -670,7 +786,7 @@ namespace Modbus.Common
             listBoxCommLog.SelectedIndex = listBoxCommLog.Items.Count - 1;
             //listBoxCommLog.SelectedIndex = -1;
         }
-
+      
         #endregion
 
         #region Data Table
@@ -682,11 +798,14 @@ namespace Modbus.Common
 
         protected void ClearRegisterData()
         {
-            for (int i = 0; i < _registerData.Length; i++)
+            lock(_dataLock)
             {
-                _registerData[i] = 0;
+                for (int i = 0; i < _registerData.Length; i++)
+                {
+                    _registerData[i] = 0;
+                }
+                refreshData();
             }
-            RefreshData();
         }
 
         protected DataTab CurrentTab
@@ -698,11 +817,15 @@ namespace Modbus.Common
             }
         }
 
-        public void RefreshData()
+        /// <summary>
+        /// UI datatable (re)construct
+        /// </summary>
+        /// <remarks>PRE: lock taken</remarks>
+        private void refreshData()
         {
             if (InvokeRequired)
             {
-                BeginInvoke(new Action(RefreshData));
+                BeginInvoke(new Action(refreshData));
                 return;
             }
             CurrentTab.RefreshData();
@@ -712,51 +835,165 @@ namespace Modbus.Common
             CurrentTab.OnApply += dataTab_OnApply;
         }
 
-        public void UpdateDataTable()
+        /// <summary>
+        /// update UI
+        /// </summary>
+        /// <remarks>PRE: lock taken</remarks>
+        private void updateDataTable()
         {
             if (InvokeRequired)
             {
-                BeginInvoke(new Action(UpdateDataTable));
+                BeginInvoke(_call._updateDataTable);
                 return;
             }
+
+            //note: data reference of CurrentTab points to _registerData
             CurrentTab.UpdateDataTable();
         }
+
+        /// <summary>
+        /// Get a single register from the data table
+        /// </summary>
+        /// <param name="offset"></param>
+        /// <returns>[false] addr out of bounds</returns>
+        protected bool TryGetRegister(ushort offset, out ushort value)
+        {
+            lock (_dataLock)
+            {
+                if(!tryRegAddr(offset, 1))
+                {
+                    value = 0;
+                    return false;
+                }
+                else
+                {
+                    value = _registerData[offset];
+                    return true;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Copy multiple registers from the data table
+        /// </summary>
+        /// <param name="offset"></param>
+        /// <param name="dest">target buffer</param>
+        /// <param name="count">registers count</param>
+        /// <returns>[false] addr out of bounds</returns>
+        protected bool TryGetRegisters(ushort offset, ushort[] dest, ushort count)
+        {
+            lock(_dataLock)
+            {
+                if (!tryRegAddr(offset, count)) return false;
+
+                Array.Copy(_registerData, offset, dest, 0, count);
+                return true;
+            }
+        }
+
+        private bool tryRegAddr(ushort offset, ushort count)
+        {
+            if (offset + count > _registerData.Length)
+            {
+                AppendLog($"Attempt to dereference invalid register addresses [{offset}-{offset + count - 1}] "+
+                    $"bounds:[0-{_registerData.Length - 1}");
+
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Update a single register to the data table
+        /// </summary>
+        /// <param name="offset"></param>
+        /// <param name="src"></param>
+        /// <param name="update">update the UI data table</param>
+        /// <returns>[false] addr out of bounds</returns>
+        /// <remarks>Should be the main use case (as the sole writing originator is the end user and the gui) but 
+        /// the application architecture seems to prefer to update the whole data table of the active tab</remarks>
+        protected bool TryPutRegister(ushort offset, ushort src, bool update)
+        {
+            lock(_dataLock)
+            {
+                if (!tryRegAddr(offset, 1)) return false;
+
+                _registerData[offset] = src; 
+
+                if (update) updateDataTable();
+
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Update multiple registers to the data table
+        /// </summary>
+        /// <param name="offset"></param>
+        /// <param name="src">src.Length registers will be written</param>
+        /// <param name="update">update the UI data table</param>
+        /// <returns>[false] addr out of bounds</returns>
+        protected bool TryPutRegisters(ushort offset, ushort[] src, bool update)
+        {
+            lock(_dataLock)
+            {
+                if (!tryRegAddr(offset, (ushort)src.Length)) return false;
+
+                src.CopyTo(_registerData, offset);
+
+                if (update) updateDataTable();
+
+                return true;
+            }
+        }
+
+        protected void Synchronize(DataTab tab)
+        {
+            tab.SetSynchronize(enterLockData, releaseLockData);
+        }
+
+        private void enterLockData() { Monitor.Enter(_dataLock); }
+        private void releaseLockData() { Monitor.Exit(_dataLock); }
 
         #endregion
 
         private void tabControl1_Selected(object sender, TabControlEventArgs e)
         {
-            CurrentTab.RegisterData = _registerData;
-            CurrentTab.DisplayFormat = DisplayFormat;
-            var tab = tabControl1.SelectedTab;
-            if (tab.Text.Equals("...") && tabControl1.TabPages.Count < 20)
+            lock (_dataLock)
             {
-                DataTab dataTab = new DataTab();
-                dataTab.DataLength = 256;
-                dataTab.DisplayFormat = DisplayFormat.Integer;
-                dataTab.Location = new Point(3, 3);
-                dataTab.Name = "dataTab" + (tabControl1.TabPages.Count + 1);
-                dataTab.RegisterData = _registerData;
-                dataTab.ShowDataLength = ShowDataLength;
-                dataTab.Size = new Size(839, 406);
-                dataTab.StartAddress = 0;
-                dataTab.TabIndex = 0;
-                dataTab.OnApply += dataTab_OnApply;
-                TabPage tabPage = new TabPage();
-                tabPage.Controls.Add(dataTab);
-                tabPage.Location = new Point(4, 22);
-                tabPage.Name = "tabPage" + (tabControl1.TabPages.Count + 1);
-                tabPage.Padding = new Padding(3);
-                tabPage.Size = new Size(851, 411);
-                tabPage.TabIndex = tabControl1.TabPages.Count;
-                tabPage.Text = "...";
-                tabPage.UseVisualStyleBackColor = true;
-                tabControl1.Controls.Add(tabPage);
+                CurrentTab.RegisterData = _registerData;
+                CurrentTab.DisplayFormat = DisplayFormat;
+                var tab = tabControl1.SelectedTab;
+                if (tab.Text.Equals("...") && tabControl1.TabPages.Count < 20)
+                {
+                    DataTab dataTab = new DataTab();
+                    dataTab.DataLength = 256;
+                    dataTab.DisplayFormat = DisplayFormat.Integer;
+                    dataTab.Location = new Point(3, 3);
+                    dataTab.Name = "dataTab" + (tabControl1.TabPages.Count + 1);
+                    dataTab.RegisterData = _registerData;
+                    dataTab.ShowDataLength = ShowDataLength;
+                    dataTab.Size = new Size(839, 406);
+                    dataTab.StartAddress = 0;
+                    dataTab.TabIndex = 0;
+                    dataTab.OnApply += dataTab_OnApply;
+                    TabPage tabPage = new TabPage();
+                    tabPage.Controls.Add(dataTab);
+                    tabPage.Location = new Point(4, 22);
+                    tabPage.Name = "tabPage" + (tabControl1.TabPages.Count + 1);
+                    tabPage.Padding = new Padding(3);
+                    tabPage.Size = new Size(851, 411);
+                    tabPage.TabIndex = tabControl1.TabPages.Count;
+                    tabPage.Text = "...";
+                    tabPage.UseVisualStyleBackColor = true;
+                    tabControl1.Controls.Add(tabPage);
+                }
+                var address = CurrentTab.StartAddress;
+                tab.Text = address.ToString();
+                _startAddress = address;
+                _dataLength = CurrentTab.DataLength;
             }
-            var address = CurrentTab.StartAddress;
-            tab.Text = address.ToString();
-            _startAddress = address;
-            _dataLength = CurrentTab.DataLength;
         }
 
         void dataTab_OnApply(object sender, EventArgs e)
@@ -773,6 +1010,8 @@ namespace Modbus.Common
             string url = "https://www.buymeacoffee.com/r4K2HIB";
             System.Diagnostics.Process.Start(url);
         }
+
+        #region connection persistence and management
 
         /// <summary>
         /// Store the current target connection parameters into a xml file
@@ -811,10 +1050,17 @@ namespace Modbus.Common
             dlg.Filter = "xml files (*.xml)|*.xml|All files (*.*)|*.*";
             if (dlg.InitialDirectory == string.Empty) dlg.InitialDirectory = Directory.GetCurrentDirectory();
 
-            if (dlg.ShowDialog() != DialogResult.OK) return;
+            if (dlg.ShowDialog() == DialogResult.OK) loadCommunicationSpec(dlg.FileName);
+        }
 
+        /// <summary>
+        /// load from the supplied file, the slave device connection modbus parameters
+        /// </summary>
+        /// <param name="filepath">xml file path</param>
+        private void loadCommunicationSpec(string filepath)
+        {
             var serializer = new XmlSerializer(typeof(ModbusConnConfiguration));
-            using (var file = new StreamReader(dlg.FileName))
+            using (var file = new StreamReader(filepath))
             {
                 var conf = serializer.Deserialize(file) as ModbusConnConfiguration;
                 if (conf.ModbusMode == CommunicationMode.TCP || conf.ModbusMode == CommunicationMode.UDP)
@@ -836,13 +1082,15 @@ namespace Modbus.Common
                 CommunicationMode = conf.ModbusMode;
                 SlaveId = conf.SlaveID;
             }
-        }
 
+            AppendLog($"[Info] Device endpoint has been loaded from file '{filepath}'");
+        }
+        
         /// <summary>
         /// Retrieve configuration object from the GUI
         /// </summary>
         /// <returns>null if initializing</returns>
-        protected ModbusConnConfiguration getCurrentConfiguration()
+        private ModbusConnConfiguration getCurrentConfiguration()
         {
             if (!_isLoaded) return null;
 
@@ -868,12 +1116,94 @@ namespace Modbus.Common
             return ModbusConnConfiguration.Create(conf, SlaveId);
         }
 
-        protected void updateWindowCaption()
+        /// <summary>
+        /// </summary>
+        /// <remarks>Override to effectively start the bus</remarks>
+        protected virtual void StartCommunication() { }
+
+        /// <summary>
+        /// Update connected/disconnected state and GUI
+        /// </summary>
+        /// <param name="state"></param>
+        /// <remarks>Must be executed in main thread (UI)</remarks>
+        protected void SetBusState(BusState state)
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(_call._setBusState, state);
+                return;
+            }
+
+            lock(m_stateLock) DoSetBusState(state);
+        }
+ 
+        /// <summary>
+        /// Actually update connected/disconnected state and GUI
+        /// </summary>
+        /// <param name="state"></param>
+        /// <remarks>Do not forget to call the base class when overriden<br/>
+        /// This method is an implementation method and must not be called directy (use <see cref="SetBusState(BusState)"/><br/>
+        /// @pre lock is held
+        /// </remarks>
+        protected virtual void DoSetBusState(BusState state)
+        {
+            if (m_connState == BusState.off)
+            {
+                //direct transition from OFF to ErrorPassive does not make sense
+                if (!state.HasFlag(BusState.error))
+                    m_connState = state;
+            }
+            else
+            {
+                if(m_connState.HasFlag(BusState.on) && state == BusState.off)
+                {
+                    AppendLog("Disconnected");
+                }
+
+                m_connState = state;
+            }
+
+            if (state.HasFlag(BusState.on))
+            {
+                groupBoxTCP.Enabled = false;
+                groupBoxRTU.Enabled = false;
+                groupBoxMode.Enabled = false;
+                grpExchange.Enabled = false;
+                grpStart.Enabled = false;
+            }
+            else
+            {
+                groupBoxMode.Enabled = true;
+                grpExchange.Enabled = true;
+                grpStart.Enabled = true;
+
+                SetMode();
+            }
+
+            updateWindowCaption();
+        }
+
+        /// <summary>
+        /// Appends error log and updates bus state
+        /// </summary>
+        /// <param name="message"></param>
+        /// <param name="passive">critical error</param>
+        protected void SetError(string message, bool passive = false)
+        {
+            AppendLog($"[error] {message}");
+
+            if(passive) SetBusState(BusState.errorPassive);
+            else SetBusState(m_connState | BusState.error);
+        }
+
+        #endregion
+
+        private void updateWindowCaption()
         {
             var conf = getCurrentConfiguration();
             if (conf == null) return;
 
-            Text = string.Concat(_wndBaseName, " ", conf.ToString());
+            Text = string.Concat(_wndBaseName, " ", conf.ToString(), $" [bus:{m_connState.ToString()}]");
         }
 
         private void onSerialPortsTextChanged(object sender, EventArgs e)

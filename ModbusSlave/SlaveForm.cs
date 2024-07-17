@@ -1,8 +1,9 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.IO.Ports;
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Threading;
 using System.Windows.Forms;
 using Modbus.Common;
@@ -11,17 +12,31 @@ using ModbusLib.Protocols;
 
 namespace ModbusSlave
 {
+    /// <summary>
+    /// </summary>
+    /// <remarks>Architecture is simple: <br/>
+    /// - 1 single worker thread listens for input connections <br/>
+    /// - each opened connection starts a single worker thread to process communication requests. This thread completes
+    /// if session expires w/o any activity and connection is lost (See <see cref="ModbusLib.TcpServer"/>)
+    /// </remarks>
     public partial class SlaveForm : BaseForm
     {
-                    
         private Function _function = Function.HoldingRegister;
         private ICommServer _listener;
         private SerialPort _uart;
+
         private Thread _thread;
+        private volatile bool _cancel;
 
         #region Form
         
-        public SlaveForm() : base("Modbus device", "Modbus Slave")
+        /// <summary>
+        /// stupid constructor to satisfy the win.forms designer
+        /// </summary>
+        public SlaveForm() : this(null) { }
+
+        public SlaveForm(AppOptions options)
+            : base("Modbus device", "Modbus Slave", options)
         {
             base.ShowDataLength = false;
             InitializeComponent();
@@ -34,6 +49,26 @@ namespace ModbusSlave
 
         private void SlaveFormLoading(object sender, EventArgs e)
         {
+            //SlaveForm copes with 1+ worker threads in addition to the main/ui thread
+            //concurrency topic remains focus around the user updates of the data registers table
+
+            //each DataTab instance must be surrounded by the base class data register table thread safety policy
+            //TabControl -> TabPage -> DataTab
+            foreach(var p in tabControl1.TabPages)
+            {
+                if(p is TabPage page)
+                    synchronize(page);
+            }
+
+            //we need to enroll the future DataTab instances too 
+            tabControl1.ControlAdded += (_, c) => { if (c.Control is TabPage page) synchronize(page); };
+
+            void synchronize(TabPage page)
+            {
+                foreach (var item in page.Controls)
+                    if (item is DataTab tab)
+                        Synchronize(tab);
+            }
         }
 
         #endregion
@@ -42,6 +77,8 @@ namespace ModbusSlave
 
         private void BtnConnectClick(object sender, EventArgs e)
         {
+            _cancel = false;
+
             try
             {
                 switch (CommunicationMode)
@@ -85,15 +122,32 @@ namespace ModbusSlave
             }
             catch (Exception ex)
             {
-                AppendLog(ex.Message);
+                SetError(ex.Message, passive:true);
                 return;
             }
-            btnConnect.Enabled = false;
-            buttonDisconnect.Enabled = true;
-            grpExchange.Enabled = true;
-            groupBoxTCP.Enabled = false;
-            groupBoxRTU.Enabled = false;
-            groupBoxMode.Enabled = false;
+
+            SetBusState(BusState.on);
+        }
+
+        protected override void StartCommunication()
+        {
+            BtnConnectClick(this, EventArgs.Empty);
+        }
+
+        protected override void DoSetBusState(BusState state)
+        {
+            base.DoSetBusState(state);
+
+            if(state.HasFlag(BusState.on))
+            {
+                btnConnect.Enabled = false;
+                buttonDisconnect.Enabled = true;
+            }
+            else
+            {
+                btnConnect.Enabled = true;
+                buttonDisconnect.Enabled = false;
+            }
         }
 
         /// <summary>
@@ -106,7 +160,7 @@ namespace ModbusSlave
             server.OutgoingData += DriverOutgoingData;
             try
             {
-                while (_thread.ThreadState == ThreadState.Running)
+                while (!_cancel && _thread.ThreadState == ThreadState.Running)
                 {
                     //wait for an incoming connection
                     _listener = _socket.GetTcpListener(server);
@@ -118,20 +172,14 @@ namespace ModbusSlave
             }
             catch (Exception ex)
             {
-                String msg = ex.Message;
+                if(!_cancel) SetError(ex.Message, passive:true);
+                else SetBusState(BusState.errorPassive);
             }
-
         }
 
         private void ButtonDisconnectClick(object sender, EventArgs e)
         {
             DoDisconnect();
-            btnConnect.Enabled = true;
-            buttonDisconnect.Enabled = false;
-            grpExchange.Enabled = true;
-            groupBoxMode.Enabled = true;
-            SetMode();
-            AppendLog("Disconnected");
         }
 
         private void DoDisconnect()
@@ -141,6 +189,10 @@ namespace ModbusSlave
                 BeginInvoke(new Action(DoDisconnect));
                 return;
             }
+
+            //here we go, old fashion
+            _cancel = true;
+
             if (_listener != null)
             {
                 _listener.Abort();
@@ -165,6 +217,8 @@ namespace ModbusSlave
                 _socket.Dispose();
                 _socket = null;
             }
+
+            SetBusState(BusState.off);
         }
 
         #endregion
@@ -195,7 +249,7 @@ namespace ModbusSlave
                     DoWrite(command);
                     break;
                 default:
-                    AppendLog(String.Format("Illegal Function, expecting function code {0}.", command.FunctionCode));
+                    SetError($"[activity] Unsupported function: {command.FunctionCode}");
                     //return an exception
                     command.ExceptionCode = ModbusCommand.ErrorIllegalFunction;
                     break;
@@ -204,28 +258,39 @@ namespace ModbusSlave
 
         private void DoRead(ModbusCommand command)
         {
-            for (int i = 0; i < command.Count; i++)
-                command.Data[i] = _registerData[command.Offset + i];
-            AppendLog(String.Format("Sent data: Function code:{0}.", command.FunctionCode));
+            bool success;
+            if (command.Count == 1)
+                success = TryGetRegister((ushort)command.Offset, out command.Data[0]);
+            else
+                success = TryGetRegisters((ushort)command.Offset, command.Data, (ushort)command.Count);
 
+            if(success == false)
+                command.ExceptionCode = ModbusCommand.ErrorIllegalDataAddress;
+            else
+                AppendLog($"[activity.tx] {command.Caption()}");
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="command"></param>
         private void DoWrite(ModbusCommand command)
         {
             var dataAddress = command.Offset;
             if (dataAddress < StartAddress || dataAddress > StartAddress + DataLength)
             {
                 AppendLog(String.Format("Received address is not within viewable range, Received address:{0}.", dataAddress));
+                command.ExceptionCode = ModbusCommand.ErrorSlaveDeviceBusy;
                 return;
             }
-            if ((command.Count + dataAddress) > _registerData.Length)
+
+            if(TryPutRegisters((ushort)dataAddress, command.Data, update: true) == false)
             {
-                AppendLog(String.Format("Received address is not within viewable range, Received address:{0}.", dataAddress));
+                command.ExceptionCode = ModbusCommand.ErrorIllegalDataAddress;
                 return;
             }
-            command.Data.CopyTo(_registerData, dataAddress);
-            UpdateDataTable();
-            AppendLog(String.Format("Received data: Function code:{0}.", command.FunctionCode));
+
+            AppendLog($"[activity.rx] {command.Caption()}");
         }
 
         #endregion

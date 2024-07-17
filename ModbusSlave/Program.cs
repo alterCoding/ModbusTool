@@ -16,7 +16,9 @@ namespace ModbusSlave
             Application.SetCompatibleTextRenderingDefault(false);
 
             _ = GlobalExceptionHandling._once;
-            Application.Run(new SlaveForm());
+
+            var options = AppOptions.FromCommandLine();
+            Application.Run(new SlaveForm(options));
         }
     }
 }

@@ -52,6 +52,7 @@
     <Compile Include="Comm\Client\ICommClient.cs" />
     <Compile Include="Comm\CommDataBase.cs" />
     <Compile Include="Comm\CommResponse.cs" />
+    <Compile Include="Comm\CommResponseExtensions.cs" />
     <Compile Include="Comm\Server\ICommServer.cs" />
     <Compile Include="Comm\Server\ServerCommData.cs" />
     <Compile Include="ExtensionAttribute.cs" />
@@ -75,6 +76,8 @@
     <Compile Include="Protocols\Modbus\Codecs\ModbusCodecReadCustom.cs" />
     <Compile Include="Protocols\Modbus\ModbusCommand.cs" />
     <Compile Include="Protocols\Modbus\ModbusCommandCodec.cs" />
+    <Compile Include="Comm\ModbusCommandExtensions.cs" />
+    <Compile Include="Protocols\Modbus\ModbusException.cs" />
     <Compile Include="Protocols\Modbus\ModbusRtuCodec.cs" />
     <Compile Include="Protocols\Modbus\ModbusServer.cs" />
     <Compile Include="Protocols\Modbus\ModbusTcpCodec.cs" />

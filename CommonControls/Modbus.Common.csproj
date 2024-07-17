@@ -47,6 +47,8 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AppOptions.cs" />
+    <Compile Include="CommandLineParsing.cs" />
     <Compile Include="DataTab.cs">
       <SubType>UserControl</SubType>
     </Compile>

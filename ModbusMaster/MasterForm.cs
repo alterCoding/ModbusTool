@@ -2,7 +2,6 @@
 using System.IO.Ports;
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Windows.Forms;
 using Modbus.Common;
 using ModbusLib;
@@ -10,6 +9,13 @@ using ModbusLib.Protocols;
 
 namespace ModbusMaster
 {
+    /// <summary>
+    /// </summary>
+    /// <remarks>
+    /// Architecture communication is very basic. It's a single-threaded application (main). All the modbus
+    /// single commands, but also the polling (if any) are processed into the window loop (thus the main thread). As a
+    /// result, the shared registers map is not synchronized
+    /// </remarks>
     public partial class MasterForm : BaseForm
     {
         private int _transactionId;
@@ -21,7 +27,10 @@ namespace ModbusMaster
 
         #region Form
 
-        public MasterForm() : base("Modbus scanner", "Modbus Master")
+        public MasterForm() : this(null) { }
+        
+        public MasterForm(AppOptions options) 
+            : base("Modbus scanner", "Modbus Master", options)
         {
             InitializeComponent();
         }
@@ -54,6 +63,11 @@ namespace ModbusMaster
         }
 
         private void BtnConnectClick(object sender, EventArgs e)
+        {
+            doConnect();
+        }
+
+        private bool doConnect()
         {
             try
             {
@@ -95,28 +109,88 @@ namespace ModbusMaster
             }
             catch (Exception ex)
             {
-                AppendLog(ex.Message);
-                return;
+                SetError(ex.Message, passive:true);
+                return false;
             }
-            btnConnect.Enabled = false;
-            buttonDisconnect.Enabled = true;
-            groupBoxFunctions.Enabled = true;
-            groupBoxTCP.Enabled = false;
-            groupBoxRTU.Enabled = false;
-            groupBoxMode.Enabled = false;
-            grpExchange.Enabled = false;
+
+            SetBusState(BusState.on);
+            return true;
         }
 
         private void ButtonDisconnectClick(object sender, EventArgs e)
         {
             DoDisconnect();
-            btnConnect.Enabled = true;
-            buttonDisconnect.Enabled = false;
-            groupBoxFunctions.Enabled = false;
-            groupBoxMode.Enabled = true;
-            grpExchange.Enabled = true;
-            SetMode();
-            AppendLog("Disconnected");
+            SetBusState(BusState.off);
+        }
+
+        protected override void StartCommunication()
+        {
+            BtnConnectClick(this, EventArgs.Empty);
+        }
+
+        protected override void DoSetBusState(BusState state)
+        {
+            base.DoSetBusState(state);
+
+            if(state.HasFlag(BusState.on))
+            {
+                btnConnect.Enabled = false;
+                buttonDisconnect.Enabled = true;
+                groupBoxFunctions.Enabled = true;
+            }
+            else
+            {
+                btnConnect.Enabled = true;
+                buttonDisconnect.Enabled = false;
+                groupBoxFunctions.Enabled = false;
+            }
+        }
+
+        #endregion
+
+        #region processing
+
+        private string formatAsError(CommResponse response, ModbusCommand command)
+        {
+            return $"[activity] {command.Caption()} status:{response.ErrorLabel()}";
+        }
+
+        private bool execute(ModbusCommand cmd, bool retry = true)
+        {
+            try
+            {
+                var result = _driver.ExecuteGeneric(_portClient, cmd);
+
+                if (result.Status == CommResponse.Ack)
+                {
+                    AppendLog($"[activity] {cmd.Caption()} success");
+                }
+                else
+                {
+                    SetError(formatAsError(result, cmd));
+                    return false; //no 2nd attempt
+                }
+            }
+            catch (SocketException ex)
+            {
+                SetError(ex.Message, passive: true);
+
+                if (ex.SocketErrorCode == SocketError.ConnectionAborted)
+                {
+                    //could be an closed session (expiration). Try to recover
+                    if (doConnect() == false)
+                        return false;
+                    else
+                        return execute(cmd, retry:false); // 2nd and last attempt
+                }
+            }
+            catch (Exception ex)
+            {
+                SetError(ex.Message);
+                return false; //no 2nd attempt
+            }
+
+            return true;
         }
 
         #endregion
@@ -147,80 +221,50 @@ namespace ModbusMaster
         {
             _lastReadCommand = function;
 
-            try
-            {
-                var command = new ModbusCommand(function) {Offset = StartAddress, Count = DataLength, TransId = _transactionId++};
-                var result = _driver.ExecuteGeneric(_portClient, command);
-                if (result.Status == CommResponse.Ack)
-                {
-                    command.Data.CopyTo(_registerData, StartAddress);
-                    UpdateDataTable();
-                    AppendLog(String.Format("Read succeeded: Function code:{0}.", function));
-                }
-                else
-                {
-                    AppendLog(String.Format("Failed to execute Read: Error code:{0}", result.Status));
-                }
-            }
-            catch (Exception ex)
-            {
-                AppendLog(ex.Message);
-            }
+            var command = new ModbusCommand(function) 
+            { 
+                Offset = StartAddress, 
+                Count = DataLength,
+                TransId = _transactionId++ 
+            };
+
+            if(execute(command))
+                if (TryPutRegisters(StartAddress, command.Data, update: true) == false)
+                    throw new InvalidOperationException("Invalid ModbusCommand read object");
         }
 
         private void ExecuteWriteCommand(byte function)
         {
-            try
+            var command = new ModbusCommand(function)
             {
-                var command = new ModbusCommand(function)
-                                  {
-                                      Offset = StartAddress,
-                                      Count = DataLength,
-                                      TransId = _transactionId++,
-                                      Data = new ushort[DataLength]
-                                  };
-                for (int i = 0; i < DataLength; i++)
-                {
-                    var index = StartAddress + i;
-                    if (index > _registerData.Length)
-                    {
-                        break;
-                    }
-                    command.Data[i] = _registerData[index];
-                }
-                var result = _driver.ExecuteGeneric(_portClient, command);
-                AppendLog(result.Status == CommResponse.Ack
-                              ? String.Format("Write succeeded: Function code:{0}", function)
-                              : String.Format("Failed to execute Write: Error code:{0}", result.Status));
-            }
-            catch (Exception ex)
-            {
-                AppendLog(ex.Message);
-            }
-        }
+                Offset = StartAddress,
+                Count = DataLength,
+                TransId = _transactionId++,
+                Data = new ushort[DataLength]
+            };
 
+            if (TryGetRegisters(StartAddress, command.Data, DataLength) == false)
+                throw new InvalidOperationException("Invalid ModbusCommand write object");
+
+            execute(command);
+        }
 
         private void BtnWriteSingleCoilClick(object sender, EventArgs e)
         {
-            try
+            var command = new ModbusCommand(ModbusCommand.FuncWriteCoil)
             {
-                var command = new ModbusCommand(ModbusCommand.FuncWriteCoil)
-                {
-                    Offset = StartAddress,
-                    Count = 1,
-                    TransId = _transactionId++,
-                    Data = new ushort[1]
-                };
-                command.Data[0] = (ushort)(_registerData[StartAddress] & 0x0100);
-                var result = _driver.ExecuteGeneric(_portClient, command);
-                AppendLog(result.Status == CommResponse.Ack
-                              ? String.Format("Write succeeded: Function code:{0}", ModbusCommand.FuncWriteCoil)
-                              : String.Format("Failed to execute Write: Error code:{0}", result.Status));
-            }
-            catch (Exception ex)
-            {
-                AppendLog(ex.Message);
-            }
+                Offset = StartAddress,
+                Count = 1,
+                TransId = _transactionId++,
+                Data = new ushort[1]
+            };
+
+            if (TryGetRegister(StartAddress, out command.Data[0]) == false)
+                throw new InvalidOperationException("Invalid ModbusCommand write object");
+            else
+                command.Data[0] &= 0x0100;
+
+            execute(command);
         }
 
         private void BtnWriteSingleRegClick(object sender, EventArgs e)

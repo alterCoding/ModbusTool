@@ -14,6 +14,19 @@ namespace Modbus.Common
     {
         protected int _displayCtrlCount;
 
+        /// <summary>
+        /// enter critical section to synchronize <see cref="RegisterData"/> property content <br/>
+        /// May be null (meaning no synchronization)
+        /// </summary>
+        /// <remarks>original application architecture hadn't plan any concurrency policy, while the internal registers
+        /// map may be shared ... we introduce here a dirty workaround
+        /// </remarks>
+        private Action _lockData;
+        /// <summary>
+        /// exit critical section 
+        /// </summary>
+        private Action _releaseData;
+
         public DataTab()
         {
             InitializeComponent();
@@ -109,6 +122,17 @@ namespace Modbus.Common
         public DisplayFormat DisplayFormat { get; set; }
 
         #endregion
+
+        /// <summary>
+        /// Call this to make access to the registered data synchronizeable
+        /// </summary>
+        /// <param name="lock"></param>
+        /// <param name="release"></param>
+        public void SetSynchronize(Action @lock, Action release)
+        {
+            _lockData = @lock;
+            _releaseData = release;
+        }
 
         #region Data Table
 
@@ -221,7 +245,6 @@ namespace Modbus.Common
             _displayCtrlCount = idxControl;
             UpdateDataTable();
             groupBoxData.Visible = true;
-
         }
 
         void txtDataBinaryKeyPress(object sender, KeyPressEventArgs e)
@@ -283,7 +306,7 @@ namespace Modbus.Common
             UInt16 res;
             if (UInt16.TryParse(textBox.Text, out res))
             {
-                RegisterData[StartAddress + textBoxNumber] = res;
+                setRegister((ushort)(StartAddress + textBoxNumber), res);
             }
             else
             {
@@ -304,8 +327,7 @@ namespace Modbus.Common
                 var firstPart = (ushort) (intRes >> 16);
                 var secondPart = (ushort)(intRes & 0xFFFF);
 
-                RegisterData[StartAddress +     textBoxNumber] = firstPart;
-                RegisterData[StartAddress + 1 + textBoxNumber] = secondPart;
+                setRegisters((ushort)(StartAddress + textBoxNumber), firstPart, secondPart);
             }
             else
             {
@@ -318,9 +340,10 @@ namespace Modbus.Common
             var textBox = (TextBox)sender;
             var textBoxNumber = Int32.Parse(textBox.Tag.ToString());
             ushort res;
+
             if (UInt16.TryParse(textBox.Text, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out res))
             {
-                RegisterData[StartAddress + textBoxNumber] = res;
+                setRegister((ushort)(StartAddress + textBoxNumber), res);
             }
             else
             {
@@ -335,7 +358,8 @@ namespace Modbus.Common
             var textBoxNumber = Int32.Parse(textBox.Tag.ToString());
             try
             {
-                RegisterData[StartAddress + textBoxNumber] = Convert.ToUInt16(textBox.Text, 2);
+                setRegister((ushort)(StartAddress + textBoxNumber), Convert.ToUInt16(textBox.Text, 2));
+
                 textBox.Text = textBox.Text.PadLeft(16, '0');
             }
             catch (Exception)
@@ -355,15 +379,22 @@ namespace Modbus.Common
             ushort shifter = bulbHiByte ? (ushort)0x0001 : (ushort)0x0100;
             var shift = bulbNumber & 0x0007;
             var mask = Convert.ToUInt16(shifter << shift);
-            if (bulb.On)
+
+            try
             {
-                RegisterData[StartAddress + index] |= mask;
+                _lockData?.Invoke();
+
+                if (bulb.On)
+                {
+                    RegisterData[StartAddress + index] |= mask;
+                }
+                else
+                {
+                    mask = (ushort)~mask; ;
+                    RegisterData[StartAddress + index] &= mask;
+                }
             }
-            else
-            {
-                mask = (ushort)~mask; ;
-                RegisterData[StartAddress + index] &= mask;
-            }
+            finally { _releaseData?.Invoke(); }
         }
 
 
@@ -372,15 +403,26 @@ namespace Modbus.Common
             // for float values we need two registers for one value
             // add one extra data value for the last control
             var data = new uint[_displayCtrlCount+1];
-            for (int i = 0; i < _displayCtrlCount+1; i++)
+
+            //we keep direct reference on the owner backed data ... as a result, some concurrent access policy must be 
+            //implemented somewhere ...
+
+            try
             {
-                var index = StartAddress + i;
-                if (index >= RegisterData.Length)
+                _lockData?.Invoke();
+
+                for (int i = 0; i < _displayCtrlCount + 1; i++)
                 {
-                    break;
+                    var index = StartAddress + i;
+                    if (index >= RegisterData.Length)
+                    {
+                        break;
+                    }
+                    data[i] = RegisterData[index];
                 }
-                data[i] = RegisterData[index];
             }
+            finally { _releaseData?.Invoke(); }
+
             // ------------------------------------------------------------------------
             // Put new data into text boxes
             foreach (Control ctrl in groupBoxData.Controls)
@@ -444,17 +486,43 @@ namespace Modbus.Common
 
         private void buttonClear_Click(object sender, EventArgs e)
         {
-            if (RegisterData != null)
+            try
             {
-                var count = DataLength;
-                for (int i = StartAddress; i < RegisterData.Length && count-- != 0; i++)
+                _lockData?.Invoke();
+
+                if (RegisterData != null)
                 {
-                    RegisterData[i] = 0;
+                    var count = DataLength;
+                    for (int i = StartAddress; i < RegisterData.Length && count-- != 0; i++)
+                    {
+                        RegisterData[i] = 0;
+                    }
+                    RefreshData();
                 }
-                RefreshData();                    
             }
+            finally { _releaseData?.Invoke(); }
         }
+
         #endregion
 
+        private void setRegister(ushort offset, ushort value)
+        {
+            try
+            {
+                _lockData?.Invoke();
+                RegisterData[offset] = value;
+            }
+            finally { _releaseData?.Invoke(); }
+        }
+        private void setRegisters(ushort offset, ushort v1, ushort v2)
+        {
+            try
+            {
+                _lockData?.Invoke();
+                RegisterData[offset] = v1;
+                RegisterData[offset+1] = v2;
+            }
+            finally { _releaseData?.Invoke(); }
+        }
     }
 }
