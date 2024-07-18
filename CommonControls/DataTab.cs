@@ -27,6 +27,11 @@ namespace Modbus.Common
         /// </summary>
         private Action _releaseData;
 
+        /// <summary>
+        /// keeps the last input text in register editBox(es)
+        /// </summary>
+        private string _lastInput;
+
         public DataTab()
         {
             InitializeComponent();
@@ -142,13 +147,13 @@ namespace Modbus.Common
             groupBoxData.Visible = false;
             groupBoxData.Controls.Clear();
             var idxControl = 0;
-            var screenX = 10;
+            var screenX = 5;
             var screenY = 20;
             while (screenX < groupBoxData.Size.Width - 100)
             {
                 var labData = new Label();
                 groupBoxData.Controls.Add(labData);
-                labData.Size = new Size(40, 20);
+                labData.Size = new Size(38, 20);
                 labData.Location = new Point(screenX, screenY);
                 labData.Font = new Font("Calibri", 8.25F, FontStyle.Regular, GraphicsUnit.Point, 0);
                 switch (DisplayFormat)
@@ -216,11 +221,10 @@ namespace Modbus.Common
                         {
                             var txtFloatReverse = new TextBox();
                             groupBoxData.Controls.Add(txtFloatReverse);
-                            txtFloatReverse.Size = new Size(55, 40);
-                            txtFloatReverse.Location = new Point(screenX + 40, screenY - 2);
+                            txtFloatReverse.Size = new Size(62, 40);
+                            txtFloatReverse.Location = new Point(screenX + 38, screenY - 2);
                             txtFloatReverse.TextAlign = HorizontalAlignment.Right;
                             txtFloatReverse.Tag = idxControl;
-                            txtFloatReverse.MaxLength = 5;
                             txtFloatReverse.Leave += TxtFloatReverseLeave;
                             txtFloatReverse.Enter += TxtFloatReverse_Enter;
                             txtFloatReverse.KeyPress += txtDataFloatReverseKeyPress;
@@ -286,6 +290,7 @@ namespace Modbus.Common
             var textBox = (TextBox)sender;
             if (!String.IsNullOrEmpty(textBox.Text))
             {
+                _lastInput = textBox.Text;
                 textBox.Clear();
             }
         }
@@ -295,6 +300,7 @@ namespace Modbus.Common
             var textBox = (TextBox)sender;
             if (!String.IsNullOrEmpty(textBox.Text))
             {
+                _lastInput = textBox.Text;
                 textBox.Clear();
             }
         }
@@ -304,7 +310,13 @@ namespace Modbus.Common
             var textBox = (TextBox)sender;
             var textBoxNumber = Int32.Parse(textBox.Tag.ToString());
             UInt16 res;
-            if (UInt16.TryParse(textBox.Text, out res))
+
+            if(textBox.Text == string.Empty)
+            {
+                //if we have inputted 'nothing', we restore the last input text
+                textBox.Text = _lastInput;
+            }
+            else if (UInt16.TryParse(textBox.Text, out res))
             {
                 setRegister((ushort)(StartAddress + textBoxNumber), res);
             }
@@ -318,16 +330,22 @@ namespace Modbus.Common
         {
             var textBox = (TextBox)sender;
             var textBoxNumber = Int32.Parse(textBox.Tag.ToString());
-
             float res;
-            if (float.TryParse(textBox.Text, out res))
+
+            if(textBox.Text == string.Empty)
+            {
+                //if we have inputted 'nothing', we restore the last input text
+                textBox.Text = _lastInput;
+            }
+            else if (float.TryParse(textBox.Text, out res))
             {
                 var intRes = BitConverter.ToUInt32(BitConverter.GetBytes(res), 0);
-
                 var firstPart = (ushort) (intRes >> 16);
                 var secondPart = (ushort)(intRes & 0xFFFF);
 
                 setRegisters((ushort)(StartAddress + textBoxNumber), firstPart, secondPart);
+
+                formatFloat(res, textBox); //(re)format
             }
             else
             {
@@ -341,21 +359,35 @@ namespace Modbus.Common
             var textBoxNumber = Int32.Parse(textBox.Tag.ToString());
             ushort res;
 
-            if (UInt16.TryParse(textBox.Text, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out res))
+            if(textBox.Text == string.Empty)
+            {
+                //if we have inputted 'nothing', we restore the last input text
+                textBox.Text = _lastInput;
+            }
+            else if (UInt16.TryParse(textBox.Text, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out res))
             {
                 setRegister((ushort)(StartAddress + textBoxNumber), res);
+
+                textBox.Text = string.Format("0x{0}", textBox.Text.ToLower().PadLeft(4, '0'));
             }
             else
             {
                 textBox.Text = "0x0000";
             }
-            textBox.Text = string.Format("0x{0}", textBox.Text.ToLower().PadLeft(4, '0'));
         }
 
         void TxtDataBinaryLeave(object sender, EventArgs e)
         {
             var textBox = (TextBox)sender;
             var textBoxNumber = Int32.Parse(textBox.Tag.ToString());
+
+            if(textBox.Text == string.Empty)
+            {
+                //if we have inputted 'nothing', we restore the last input text
+                textBox.Text = _lastInput;
+                return;
+            }
+ 
             try
             {
                 setRegister((ushort)(StartAddress + textBoxNumber), Convert.ToUInt16(textBox.Text, 2));
@@ -427,7 +459,7 @@ namespace Modbus.Common
             // Put new data into text boxes
             foreach (Control ctrl in groupBoxData.Controls)
             {
-                if (ctrl is TextBox)
+                if (ctrl is TextBox editBox)
                 {
                     int x = Convert.ToInt16(ctrl.Tag);
                     if (x <= data.GetUpperBound(0))
@@ -446,7 +478,7 @@ namespace Modbus.Common
                             case DisplayFormat.FloatReverse:
                                 uint twoWords = ((uint)data[x] << 16) + data[x + 1];
                                 float r = BitConverter.ToSingle(BitConverter.GetBytes(twoWords), 0);
-                                ctrl.Text = String.Format("{0:0.000}", r);
+                                formatFloat(r, editBox);
                                 break;
                         }
                         ctrl.Visible = true;
@@ -523,6 +555,13 @@ namespace Modbus.Common
                 RegisterData[offset+1] = v2;
             }
             finally { _releaseData?.Invoke(); }
+        }
+
+        private static void formatFloat(float value, TextBox control)
+        {
+            string text = value.ToString("G");
+            if (text.Length >= 10) text = value.ToString("G5");
+            if (text != control.Text) control.Text = text;
         }
     }
 }
