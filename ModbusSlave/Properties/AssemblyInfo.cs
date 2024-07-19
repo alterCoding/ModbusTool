@@ -8,9 +8,9 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyTitle("ModbusSlave")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("ClassicDIY")]
+[assembly: AssemblyCompany("AlterCoding")]
 [assembly: AssemblyProduct("ModbusSlave")]
-[assembly: AssemblyCopyright("Copyright 2020 ClassicDIY (https://github.com/ClassicDIY/ModbusTool)")]
+[assembly: AssemblyCopyright("\u00A9 Manfred.Ehrhart/AlterCoding 2024 (forked from https://github.com/ClassicDIY/ModbusTool)")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
@@ -32,5 +32,6 @@ using System.Runtime.InteropServices;
 // You can specify all the values or you can default the Build and Revision Numbers 
 // by using the '*' as shown below:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("2.1.0.0")]
-[assembly: AssemblyFileVersion("2.1.0.0")]
+[assembly: AssemblyVersion("2.2.0.0")]
+[assembly: AssemblyFileVersion("2.2.0.0")]
+[assembly: AssemblyInformationalVersion("2.2.0+forkAltCod")]

@@ -1,4 +1,9 @@
 # ModbusTool
+
+![Static Badge](https://img.shields.io/badge/project-status-8A2BE2)
+
+Forked from https://github.com/ClassicDIY/ModbusTool, this project doesn't offer any releases yet. Please refer to the source project, from which the original readme follows.
+
 ## A modbus TCP and RTU master and slave tool with import and export functionality.
 
 <a href="https://www.buymeacoffee.com/r4K2HIB" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
@@ -46,7 +51,7 @@ Once installed, you can launch ModbusTool and start using its master and slave t
 
 ## License
 ```
-
+ Copyright (c) 2024. AlterCoding
  Copyright (c) 2020. ClassicDIY
 
   Licensed under the Apache License, Version 2.0 (the "License");

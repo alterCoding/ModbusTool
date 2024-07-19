@@ -89,7 +89,9 @@ namespace Modbus.Common
             _registerData = new ushort[65600];
 
             _wndBaseName = wndBaseName;
-            txtAppVersion.Text = $"{appName} ver. {Assembly.GetExecutingAssembly().GetName().Version.ToString()}";
+
+            var version = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+            txtAppVersion.Text = $"{appName} v{version.InformationalVersion}";
 
             _call = new Callers(this);
         }
@@ -1006,7 +1008,7 @@ namespace Modbus.Common
 
         private void donate_Click(object sender, EventArgs e)
         {
-            string url = "https://www.buymeacoffee.com/r4K2HIB";
+            string url = "https://github.com/ClassicDIY/ModbusTool";
             System.Diagnostics.Process.Start(url);
         }
 
@@ -1223,6 +1225,24 @@ namespace Modbus.Common
         private void onIPPortValidated(object sender, EventArgs e)
         {
             updateWindowCaption();
+        }
+
+        private void onBtnContactClick(object sender, EventArgs e)
+        {
+            string url = "https://github.com/alterCoding/ModbusTool";
+            System.Diagnostics.Process.Start(url);
+        }
+
+        private void onBtnContactHover(object sender, EventArgs e)
+        {
+            btnContact.Image = Properties.Resources.github32;
+
+        }
+
+        private void onBtnContactLeave(object sender, EventArgs e)
+        {
+            btnContact.Image = Properties.Resources.share32;
+
         }
     }
 }
