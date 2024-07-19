@@ -27,12 +27,24 @@ namespace ModbusMaster
 
         #region Form
 
+        private Timer _pollTimer;
+
         public MasterForm() : this(null) { }
         
         public MasterForm(AppOptions options) 
             : base("Modbus scanner", "Modbus Master", options)
         {
             InitializeComponent();
+
+            //Here, we "manually" manage the Timer instance (instead of relying on the designer) because the designer
+            //does not see the base member 'components' ... 
+            //Due to a "relative" form inheritance support by the designer, it's really painful to share an IContainer 
+            //instance between a base form and a child form (i.e both at runtime time and design time)
+            //It's finally better to do it yourself, as usual ... and the designer doesn't complain anymore
+            ///
+            _pollTimer = new Timer(this.components);
+            _pollTimer.Interval = 2000;
+            _pollTimer.Tick += new EventHandler(this.pollTimer_Tick);
         }
 
         private void MasterFormClosing(object sender, FormClosingEventArgs e)
@@ -294,22 +306,22 @@ namespace ModbusMaster
             var textBox = (TextBox)sender;
             if (int.TryParse(textBox.Text, out var parsedMillisecs))
             {
-                pollTimer.Interval = parsedMillisecs;
+                _pollTimer.Interval = parsedMillisecs;
             }
             else
             {
                 textBox.Text = "0";
                 cbPoll.Checked = false;
-                pollTimer.Enabled = false;
+                _pollTimer.Enabled = false;
             }
 
         }
 
         private void cbPoll_CheckStateChanged(object sender, EventArgs e)
         {
-            pollTimer.Enabled = cbPoll.Checked;
+            _pollTimer.Enabled = cbPoll.Checked;
 
-            if (!pollTimer.Enabled)
+            if (!_pollTimer.Enabled)
                 _lastReadCommand = 0;
         }
 

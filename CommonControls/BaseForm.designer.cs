@@ -28,10 +28,12 @@
         /// </summary>
         protected void InitializeComponent()
         {
+            this.components = new System.ComponentModel.Container();
             Modbus.Common.DataTab dataTab1;
             Modbus.Common.DataTab dataTab2;
             System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(BaseForm));
             this.groupBox4 = new System.Windows.Forms.GroupBox();
+            this.btnContact = new System.Windows.Forms.Button();
             this.txtAppVersion = new System.Windows.Forms.Label();
             this.buttonSave = new System.Windows.Forms.Button();
             this.buttonPauseLog = new System.Windows.Forms.Button();
@@ -76,6 +78,7 @@
             this.saveFileDialog = new System.Windows.Forms.SaveFileDialog();
             this.grpExchange = new System.Windows.Forms.GroupBox();
             this.donate = new System.Windows.Forms.Button();
+            this.toolTip = new System.Windows.Forms.ToolTip(this.components);
             this.tabControl1 = new Modbus.Common.TabControlEx();
             this.tabPage1 = new System.Windows.Forms.TabPage();
             this.tabPage2 = new System.Windows.Forms.TabPage();
@@ -95,6 +98,7 @@
             // 
             // groupBox4
             // 
+            this.groupBox4.Controls.Add(this.btnContact);
             this.groupBox4.Controls.Add(this.txtAppVersion);
             this.groupBox4.Controls.Add(this.buttonSave);
             this.groupBox4.Controls.Add(this.buttonPauseLog);
@@ -106,6 +110,22 @@
             this.groupBox4.TabIndex = 20;
             this.groupBox4.TabStop = false;
             this.groupBox4.Text = "Communication Log";
+            // 
+            // btnContact
+            // 
+            this.btnContact.Image = global::Modbus.Common.Properties.Resources.share32;
+            this.btnContact.ImageAlign = System.Drawing.ContentAlignment.MiddleRight;
+            this.btnContact.Location = new System.Drawing.Point(222, 14);
+            this.btnContact.Name = "btnContact";
+            this.btnContact.Size = new System.Drawing.Size(62, 34);
+            this.btnContact.TabIndex = 28;
+            this.btnContact.Text = "Info";
+            this.btnContact.TextAlign = System.Drawing.ContentAlignment.TopLeft;
+            this.toolTip.SetToolTip(this.btnContact, "Follow on GitHub");
+            this.btnContact.UseVisualStyleBackColor = true;
+            this.btnContact.Click += new System.EventHandler(this.onBtnContactClick);
+            this.btnContact.MouseLeave += new System.EventHandler(this.onBtnContactLeave);
+            this.btnContact.MouseHover += new System.EventHandler(this.onBtnContactHover);
             // 
             // txtAppVersion
             // 
@@ -174,7 +194,7 @@
             // 
             // label7
             // 
-            this.label7.Location = new System.Drawing.Point(605, 19);
+            this.label7.Location = new System.Drawing.Point(601, 19);
             this.label7.Name = "label7";
             this.label7.Size = new System.Drawing.Size(57, 16);
             this.label7.TabIndex = 28;
@@ -182,7 +202,7 @@
             // 
             // textBoxSlaveID
             // 
-            this.textBoxSlaveID.Location = new System.Drawing.Point(653, 15);
+            this.textBoxSlaveID.Location = new System.Drawing.Point(649, 15);
             this.textBoxSlaveID.Name = "textBoxSlaveID";
             this.textBoxSlaveID.Size = new System.Drawing.Size(35, 20);
             this.textBoxSlaveID.TabIndex = 27;
@@ -287,14 +307,14 @@
             this.grpStart.Controls.Add(this.label7);
             this.grpStart.Location = new System.Drawing.Point(7, 12);
             this.grpStart.Name = "grpStart";
-            this.grpStart.Size = new System.Drawing.Size(697, 126);
+            this.grpStart.Size = new System.Drawing.Size(692, 126);
             this.grpStart.TabIndex = 18;
             this.grpStart.TabStop = false;
             this.grpStart.Text = "Communication";
             // 
             // btnLoadCom
             // 
-            this.btnLoadCom.Location = new System.Drawing.Point(608, 91);
+            this.btnLoadCom.Location = new System.Drawing.Point(604, 91);
             this.btnLoadCom.Name = "btnLoadCom";
             this.btnLoadCom.Size = new System.Drawing.Size(75, 23);
             this.btnLoadCom.TabIndex = 32;
@@ -538,7 +558,7 @@
             // 
             // btnSaveCom
             // 
-            this.btnSaveCom.Location = new System.Drawing.Point(608, 52);
+            this.btnSaveCom.Location = new System.Drawing.Point(604, 52);
             this.btnSaveCom.Name = "btnSaveCom";
             this.btnSaveCom.Size = new System.Drawing.Size(75, 23);
             this.btnSaveCom.TabIndex = 31;
@@ -563,13 +583,20 @@
             // 
             // donate
             // 
-            this.donate.Image = global::Modbus.Common.Properties.Resources.default_yellowS2;
-            this.donate.Location = new System.Drawing.Point(709, 82);
+            this.donate.Image = global::Modbus.Common.Properties.Resources.forked;
+            this.donate.Location = new System.Drawing.Point(701, 82);
+            this.donate.Margin = new System.Windows.Forms.Padding(0);
             this.donate.Name = "donate";
-            this.donate.Size = new System.Drawing.Size(156, 54);
+            this.donate.Size = new System.Drawing.Size(167, 54);
             this.donate.TabIndex = 37;
             this.donate.UseVisualStyleBackColor = true;
             this.donate.Click += new System.EventHandler(this.donate_Click);
+            // 
+            // toolTip
+            // 
+            this.toolTip.AutoPopDelay = 5000;
+            this.toolTip.InitialDelay = 0;
+            this.toolTip.ReshowDelay = 100;
             // 
             // tabControl1
             // 
@@ -721,5 +748,7 @@
         private System.Windows.Forms.Button btnSaveCom;
         private System.Windows.Forms.Button btnLoadCom;
         private System.Windows.Forms.Label txtAppVersion;
+        private System.Windows.Forms.Button btnContact;
+        private System.Windows.Forms.ToolTip toolTip;
     }
 }

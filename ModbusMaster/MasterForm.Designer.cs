@@ -2,29 +2,14 @@
 {
     partial class MasterForm
     {
-
-        /// <summary>
-        /// Clean up any resources being used.
-        /// </summary>
-        /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing && (components != null))
-            {
-                components.Dispose();
-            }
-            base.Dispose(disposing);
-        }
-
         #region Windows Form Designer generated code
 
         /// <summary>
         /// Required method for Designer support - do not modify
         /// the contents of this method with the code editor.
         /// </summary>
-        private void InitializeComponent()
+        private new void InitializeComponent()
         {
-            this.components = new System.ComponentModel.Container();
             System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(MasterForm));
             this.groupBoxFunctions = new System.Windows.Forms.GroupBox();
             this.txtPollDelay = new System.Windows.Forms.TextBox();
@@ -39,7 +24,6 @@
             this.btnWriteSingleCoil = new System.Windows.Forms.Button();
             this.buttonDisconnect = new System.Windows.Forms.Button();
             this.btnConnect = new System.Windows.Forms.Button();
-            this.pollTimer = new System.Windows.Forms.Timer(this.components);
             this.groupBox4.SuspendLayout();
             this.groupBox3.SuspendLayout();
             this.grpStart.SuspendLayout();
@@ -205,12 +189,7 @@
             this.btnConnect.TabIndex = 36;
             this.btnConnect.Text = "Connect";
             this.btnConnect.Click += new System.EventHandler(this.BtnConnectClick);
-            // 
-            // pollTimer
-            // 
-            this.pollTimer.Interval = 2000;
-            this.pollTimer.Tick += new System.EventHandler(this.pollTimer_Tick);
-            // 
+           // 
             // MasterForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
@@ -264,7 +243,5 @@
         private System.Windows.Forms.Button btnConnect;
         private System.Windows.Forms.TextBox txtPollDelay;
         private System.Windows.Forms.CheckBox cbPoll;
-        private System.Windows.Forms.Timer pollTimer;
-        private System.ComponentModel.IContainer components;
     }
 }
