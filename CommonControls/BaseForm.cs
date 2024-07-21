@@ -55,6 +55,13 @@ namespace Modbus.Common
         private BusState m_connState;
         private object m_stateLock = new object();
 
+        /** 
+         * The folder path of the last load/save xml/csv file operation (communication file or data table file).
+         * We keep it and do-it-yourself as the native MRU feature is not a "per application" feature but a 
+         * "per extension" one, thus it's not very useful but annoying
+         */
+        private string _lastDataDir;
+
         /// <summary>
         /// Wrap some instance methods into a delegate
         /// </summary>
@@ -199,6 +206,9 @@ namespace Modbus.Common
             SlaveDelay = Properties.Settings.Default.SlaveDelay;
             DataBits = Properties.Settings.Default.DataBits;
             StopBits = Properties.Settings.Default.StopBits;
+
+            _lastDataDir = Properties.Settings.Default.LastDataDirectory;
+            if (string.IsNullOrWhiteSpace(_lastDataDir)) _lastDataDir = Directory.GetCurrentDirectory();
         }
 
         private void SaveUserData()
@@ -216,6 +226,8 @@ namespace Modbus.Common
             Properties.Settings.Default.SlaveDelay = SlaveDelay;
             Properties.Settings.Default.DataBits = DataBits;
             Properties.Settings.Default.StopBits = StopBits;
+            Properties.Settings.Default.LastDataDirectory = _lastDataDir;
+
             Properties.Settings.Default.Save();
         }
 
@@ -225,11 +237,12 @@ namespace Modbus.Common
 
         private void ButtonImportClick(object sender, EventArgs e)
         {
-            openFileDialog.AddExtension = true;
-            openFileDialog.DefaultExt = ".csv";
-            openFileDialog.Multiselect = false;
+            prepareFileDialog(string.Empty, "csv", saveOrLoad: false);
+
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
+                _lastDataDir = Path.GetDirectoryName(openFileDialog.FileName);
+
                 lock (_dataLock)
                 {
                     importDataTable(openFileDialog.FileName);
@@ -345,13 +358,14 @@ namespace Modbus.Common
                     suffix = "_LED_";
                     break;
             }
+
             var filename = "ModbusExport_" + startAddress + suffix + DateTime.Now.ToString("yyyyMMddHHmm") + ".csv";
-            saveFileDialog.AddExtension = true;
-            saveFileDialog.DefaultExt = ".csv";
-            saveFileDialog.FileName = filename;
-            saveFileDialog.OverwritePrompt = true;
+            prepareFileDialog(filename, "csv", saveOrLoad: true);
+
             if (saveFileDialog.ShowDialog() == DialogResult.OK)
             {
+                _lastDataDir = Path.GetDirectoryName(saveFileDialog.FileName);
+
                 using (var s = saveFileDialog.OpenFile())
                 {
                     using (var w = new StreamWriter(s))
@@ -1021,20 +1035,16 @@ namespace Modbus.Common
         /// <param name="e"></param>
         private void btnSaveComClick(object sender, EventArgs e)
         {
-            var conf = getCurrentConfiguration();
+            prepareFileDialog("ModbusSlaveEndPoint", "xml", saveOrLoad: true);
 
-            var dlg = new SaveFileDialog();
-            dlg.FileName = "ModbusSlaveEndPoint";
-            dlg.OverwritePrompt = true;
-            dlg.Filter = "xml files (*.xml)|*.xml|All files (*.*)|*.*";
-            dlg.DefaultExt = "xml";
-            if (dlg.InitialDirectory == string.Empty) dlg.InitialDirectory = Directory.GetCurrentDirectory();
+            if (saveFileDialog.ShowDialog() != DialogResult.OK) return;
 
-            if (dlg.ShowDialog() != DialogResult.OK) return;
+            _lastDataDir = Path.GetDirectoryName(saveFileDialog.FileName);
 
             var serializer = new XmlSerializer(typeof(ModbusConnConfiguration));
-            using (var file = new StreamWriter(dlg.FileName))
+            using (var file = new StreamWriter(saveFileDialog.FileName))
             {
+                var conf = getCurrentConfiguration();
                 serializer.Serialize(file, conf);
             }
         }
@@ -1046,12 +1056,14 @@ namespace Modbus.Common
         /// <param name="e"></param>
         private void btnLoadComClick(object sender, EventArgs e)
         {
-            var dlg = new OpenFileDialog();
-            dlg.FileName = "ModbusSlaveEndPoint";
-            dlg.Filter = "xml files (*.xml)|*.xml|All files (*.*)|*.*";
-            if (dlg.InitialDirectory == string.Empty) dlg.InitialDirectory = Directory.GetCurrentDirectory();
+            prepareFileDialog("ModbusSlaveEndPoint", "xml", saveOrLoad: false);
 
-            if (dlg.ShowDialog() == DialogResult.OK) loadCommunicationSpec(dlg.FileName);
+            if (openFileDialog.ShowDialog() != DialogResult.OK) return;
+
+            _lastDataDir = Path.GetDirectoryName(openFileDialog.FileName);
+
+            loadCommunicationSpec(openFileDialog.FileName);
+            updateWindowCaption();
         }
 
         /// <summary>
@@ -1236,13 +1248,22 @@ namespace Modbus.Common
         private void onBtnContactHover(object sender, EventArgs e)
         {
             btnContact.Image = Properties.Resources.github32;
-
         }
 
         private void onBtnContactLeave(object sender, EventArgs e)
         {
             btnContact.Image = Properties.Resources.share32;
+        }
 
+        private void prepareFileDialog(string fname, string ext, bool saveOrLoad)
+        {
+            FileDialog dlg;
+            if (saveOrLoad) dlg = saveFileDialog; else dlg = openFileDialog;
+
+            dlg.InitialDirectory = _lastDataDir; //arguable convenience
+            dlg.Filter = $"{ext} files (*.{ext})|*.{ext}|All files (*.*)|*.*";
+            dlg.DefaultExt = $".{ext}";
+            dlg.FileName = fname;
         }
     }
 }
