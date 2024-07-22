@@ -3,11 +3,6 @@
     partial class BaseForm
     {
         /// <summary>
-        /// Required designer variable.
-        /// </summary>
-        protected System.ComponentModel.IContainer components = null;
-
-        /// <summary>
         /// Clean up any resources being used.
         /// </summary>
         /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
@@ -750,5 +745,6 @@
         private System.Windows.Forms.Label txtAppVersion;
         private System.Windows.Forms.Button btnContact;
         private System.Windows.Forms.ToolTip toolTip;
+        private System.ComponentModel.IContainer components;
     }
 }

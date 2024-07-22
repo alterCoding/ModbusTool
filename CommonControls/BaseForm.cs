@@ -9,6 +9,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Xml.Serialization;
 using System.Windows.Forms;
+using System.ComponentModel;
 using static System.Windows.Forms.LinkLabel;
 using System.Threading;
 
@@ -82,6 +83,12 @@ namespace Modbus.Common
         private readonly Callers _call;
 
         #region Form 
+
+        /// <summary>
+        /// publish the private components instance, which is managed by the designer (it's wise to avoid to stress the
+        /// designer ... and its fucking generated code)
+        /// </summary>
+        protected IContainer baseComponents => components;
 
         public BaseForm() : this("{Modbus window}", "{Modbus app}")
         {

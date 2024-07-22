@@ -42,7 +42,7 @@ namespace ModbusMaster
             //instance between a base form and a child form (i.e both at runtime time and design time)
             //It's finally better to do it yourself, as usual ... and the designer doesn't complain anymore
             ///
-            _pollTimer = new Timer(this.components);
+            _pollTimer = new Timer(baseComponents);
             _pollTimer.Interval = 2000;
             _pollTimer.Tick += new EventHandler(this.pollTimer_Tick);
         }
