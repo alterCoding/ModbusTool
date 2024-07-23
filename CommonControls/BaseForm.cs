@@ -10,6 +10,7 @@ using System.Text;
 using System.Xml.Serialization;
 using System.Windows.Forms;
 using System.ComponentModel;
+using System.Linq;
 using static System.Windows.Forms.LinkLabel;
 using System.Threading;
 
@@ -151,7 +152,7 @@ namespace Modbus.Common
                 }
                 else
                 {
-                    importDataTable(dtable);
+                    importDataTable(dtable, notice:false);
                 }
             }
 
@@ -252,67 +253,218 @@ namespace Modbus.Common
 
                 lock (_dataLock)
                 {
-                    importDataTable(openFileDialog.FileName);
+                    importDataTable(openFileDialog.FileName, notice:true);
                 }
             }
         }
 
+        private void importDataTable(string filepath, bool notice)
+        {
+            int count = importDataTable(filepath);
+            if (notice && count < 0)
+            {
+                string msg = $"Inconsistent data table due to {count} discarded records. The 'registers count'" +
+                    $"and/or 'Start address' should be reviewed";
+
+                MessageBox.Show(msg, "Import error", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+            }
+        }
+
         /// <summary>
-        /// read data table from a csv file
+        /// Read data table from a csv file
         /// </summary>
         /// <param name="filepath"></param>
-        /// <remarks>PRE: lock taken</remarks>
-        private void importDataTable(string filepath)
+        /// <remarks>
+        /// - PRE: lock taken <br/>
+        /// - POST: <see cref="StartAddress"/> is set to the 1th valid record address<br/>
+        /// - POST: <see cref="DataLength"/> is set to the whole records count. In case of invalid entries, it might
+        /// be inconsistent, depending on where and which of the registers are failed to be parsed
+        /// </remarks>
+        /// <returns>
+        /// - a positive value tells the imported registers count (native registers), i.e a full successfully import.
+        /// Shall be equal to <see cref="DataLength"/>
+        /// <br/>
+        /// - a negative value tells the discarded registers entries count. The <see cref="DataLength"/> shall be
+        /// inconsistent with the truly updated registers count<br/>
+        /// </returns>
+        private int importDataTable(string filepath)
         {
+            //invalid entries count: either 16 or 32 bit
+            int discarded = 0;
+            //valid registers count: either 16 or 32 bit
+            int rcount = 0;
+            bool is32bit = false;
+
             using (var s = new FileStream(filepath, FileMode.Open, FileAccess.Read))
             {
+                DisplayFormat fmt = DisplayFormat.Integer; //fallback (decimal expected)
+
                 using (var r = new StreamReader(s))
                 {
                     var rec = r.ReadToEnd();
                     var sets = rec.Split(',');
-                    var first = true;
-                    foreach (var s1 in sets)
+
+                    //guess the (unique) format --------------------------------------------------------
+                    //as of now, all values share the same format
+
+                    ushort addr; string value;
+                    int i = 0;
+                    while(i < sets.Length)
                     {
-                        DisplayFormat fmt;
-                        var v = s1.Split(':');
-                        var address = int.Parse(v[0]);
-                        ushort data;
-                        if (v[1].StartsWith("0x", StringComparison.CurrentCultureIgnoreCase))
+                        if (!tryRegisterEntry(sets[i++], out addr, out value))
+                        {
+                            discarded++;
+                            continue;
+                        }
+
+                        if (value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
                         {
                             fmt = DisplayFormat.Hex;
-                            var sub = v[1].Substring(2);
-                            ushort.TryParse(sub, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out data);
                         }
-                        else if (v[1].Length > 6) //must be binary
+                        else if (value.StartsWith("0b", StringComparison.OrdinalIgnoreCase))
                         {
+                            //0b or b prefixes are not standard ... but pseudo standard and especially convenient
+                            //should be binary (... or LED !!!)
                             fmt = DisplayFormat.Binary;
-                            data = Convert.ToUInt16(v[1], 2);
+                        }
+                        else if (value.Contains("."))
+                        {
+                            //floating-point have been stored with neutral culture
+                            fmt = DisplayFormat.FloatReverse;
+                            is32bit = true;
+                        }
+
+                        SetFunction(fmt);
+                        StartAddress = addr;
+
+                        break;
+                    }
+
+                    //parse the records from the 1th valid ------------------------------------------------------------
+
+                    foreach (var s1 in sets.Skip(i-1))
+                    {
+                        if(!tryRegisterEntry(s1, out addr, out value))
+                        {
+                            discarded++;
+                            continue;
+                        }
+
+                        if (fmt == DisplayFormat.Hex) 
+                        {
+                            var sub = value.Substring(2); //eat prefix
+
+                            if (!ushort.TryParse(sub, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var hex)
+                                || !trySetRegister(addr, hex))
+                                discarded++;
+                            else
+                                rcount++;
+                        }
+                        else if(fmt == DisplayFormat.FloatReverse)
+                        {
+                            //floating-point have been stored with neutral culture --
+
+                            if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var f32)
+                                || !trySetRegisters(addr, f32))
+                                discarded++;
+                            else
+                                rcount++;
+                        }
+                        else if (fmt == DisplayFormat.Binary || fmt == DisplayFormat.LED)
+                        {
+                            var sub = value.Substring(2); //eat prefix
+
+                            try
+                            {
+                                var bin = Convert.ToUInt16(sub, 2);
+                                if (!trySetRegister(addr, bin))
+                                    discarded++;
+                                else
+                                    rcount++;
+                            }
+                            catch (Exception) { discarded++; }
+                        }
+                        else if(fmt == DisplayFormat.Integer)
+                        {
+                            if (!ushort.TryParse(value, out var dec) || !trySetRegister(addr, dec))
+                                discarded++;
+                            else
+                                rcount++;
                         }
                         else
                         {
-                            fmt = DisplayFormat.Integer;
-                            data = Convert.ToUInt16(v[1], 10);
-                        }
-                        if (address < _registerData.Length)
-                        {
-                            _registerData[address] = data;
-                        }
-                        if (first)
-                        {
-                            SetFunction(fmt);
-                            first = false;
-                            StartAddress = UInt16.Parse(v[0]);
+                            //not reached
+                            discarded++;
                         }
                     }
+
                     r.Close();
-                    DataLength = Convert.ToUInt16(sets.Length);
-                    // display data
+
+                    //is inconsistent when discarded != 0
+                    DataLength = (ushort)(rcount * (is32bit ? 2 : 1));
+
+                    if (discarded == 0)
+                        AppendLog($"[Info] A data table has been loaded from '{filepath}' with {rcount} registers "+
+                            $"({(is32bit ? "32" : "16")}bit)");
+                    else
+                        SetError($"A data table has been loaded from '{filepath}' with {rcount} registers " +
+                            $"({(is32bit ? "32" : "16")}bit) but {discarded} others have been discarded, data table might be corrupted");
                 }
                 s.Close();
             }
 
-            AppendLog($"[Info] a data table has been loaded from '{filepath}'");
+            // display data
             refreshData();
+
+            return (discarded != 0 ? -discarded : rcount) * (is32bit ? 2 : 1);
+
+            /** 
+             * parse/split a 16/32 bit register record (register_offset:register_value) 
+             * - address is parsed as a decimal or hexa value
+             * - value is not parsed
+             */
+            bool tryRegisterEntry(string entry, out ushort addr, out string value)
+            {
+                addr = 0;
+                value = string.Empty;
+
+                int pos = entry.IndexOf(':');
+                if (pos == -1) 
+                    return false;
+
+                //decimal or hexa address
+                if (!ushort.TryParse(entry.Substring(0, pos), NumberStyles.Integer, CultureInfo.InvariantCulture, out addr))
+                {
+                    if (!ushort.TryParse(entry.Substring(0, pos), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out addr))
+                        return false;
+                }
+
+                value = entry.Substring(pos +1);
+                return true;
+            }
+            /**
+             * set a 16bit register
+             */
+            bool trySetRegister(ushort addr, ushort value)
+            {
+                if (addr >= _registerData.Length) return false;
+
+                _registerData[addr] = value;
+
+                return true;
+            }
+            /**
+             * set a 32 bit register, marshalling a floating point value as big-endian
+             */
+            bool trySetRegisters(ushort addr, float value)
+            {
+                if (addr+1 >= _registerData.Length) return false;
+
+                //FloatReverse is float.bigendian ... 
+                Marshaller.ToBinary(value, new ArraySegment<ushort>(_registerData, addr, 2), Endianness.BE);
+
+                return true;
+            }
         }
 
         public delegate void SetFunctionDelegate(DisplayFormat log);
@@ -347,8 +499,10 @@ namespace Modbus.Common
 
         private void ButtonExportClick(object sender, EventArgs e)
         {
-            var startAddress = StartAddress;
-            var length = DataLength;
+            int offset = StartAddress;
+            int end = StartAddress + DataLength;
+            bool is32bit = false;
+
             string suffix = "-";
             switch (DisplayFormat)
             {
@@ -364,9 +518,16 @@ namespace Modbus.Common
                 case DisplayFormat.LED:
                     suffix = "_LED_";
                     break;
+                case DisplayFormat.FloatReverse:
+                    suffix = "_Fpt_";
+                    is32bit = true;
+                    break;
             }
 
-            var filename = "ModbusExport_" + startAddress + suffix + DateTime.Now.ToString("yyyyMMddHHmm") + ".csv";
+            //adjust upper bound
+            if (is32bit) end--;
+
+            var filename = "ModbusExport_" + offset + suffix + DateTime.Now.ToString("yyyyMMddHHmm") + ".csv";
             prepareFileDialog(filename, "csv", saveOrLoad: true);
 
             if (saveFileDialog.ShowDialog() == DialogResult.OK)
@@ -377,27 +538,41 @@ namespace Modbus.Common
                 {
                     using (var w = new StreamWriter(s))
                     {
-                        for (var x = 0; x < length; x++)
+                        ushort regCount = (ushort)(DisplayFormat.FloatReverse == DisplayFormat ? 2 : 1);
+
+                        while(offset < end)
                         {
-                            w.Write(startAddress++);
+                            w.Write(offset);
                             w.Write(':');
-                            var data = _registerData[StartAddress + x];
+
+                            ushort data;
                             switch (DisplayFormat)
                             {
                                 case DisplayFormat.Integer:
+                                    data = _registerData[offset];
                                     w.Write(string.Format("{0}", data));
                                     break;
                                 case DisplayFormat.Hex:
+                                    data = _registerData[offset];
                                     w.Write(string.Format("0x{0:x4}", data));
+                                    break;
+                                case DisplayFormat.FloatReverse:
+                                    float f32 = Marshaller.FloatFromBinary(new ArraySegment<ushort>(_registerData, offset, 2), Endianness.BE);
+                                    w.Write(f32.ToString("E9", CultureInfo.InvariantCulture));
                                     break;
                                 case DisplayFormat.Binary:
                                 case DisplayFormat.LED:
-                                    w.Write(Convert.ToString(data, 2).PadLeft(16, '0'));
+                                    data = _registerData[offset];
+                                    w.Write(string.Concat("0b", Convert.ToString(data, 2).PadLeft(16, '0')));
                                     break;
                             }
-                            if (x < length - 1)
+
+                            if (offset < end - 1)
                                 w.Write(',');
+
+                            offset += regCount;
                         }
+
                         w.Flush();
                         w.Close();
                     }

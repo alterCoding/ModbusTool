@@ -55,6 +55,7 @@
     <Compile Include="DataTab.Designer.cs">
       <DependentUpon>DataTab.cs</DependentUpon>
     </Compile>
+    <Compile Include="Endianness.cs" />
     <Compile Include="Enumerations.cs" />
     <Compile Include="GlobalExceptionHandling.cs" />
     <Compile Include="LedBulb.cs">
