@@ -235,8 +235,8 @@
             this.radioButtonReverseFloat.Name = "radioButtonReverseFloat";
             this.radioButtonReverseFloat.Size = new System.Drawing.Size(90, 21);
             this.radioButtonReverseFloat.TabIndex = 5;
-            this.radioButtonReverseFloat.Tag = "FloatReverse";
-            this.radioButtonReverseFloat.Text = "FloatReverse";
+            this.radioButtonReverseFloat.Tag = "Float32";
+            this.radioButtonReverseFloat.Text = "Float32";
             this.radioButtonReverseFloat.Click += new System.EventHandler(this.RadioButtonDisplayFormatCheckedChanged);
             // 
             // radioButtonInteger

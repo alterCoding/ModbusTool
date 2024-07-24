@@ -36,7 +36,11 @@
             this.txtStartAdress = new System.Windows.Forms.TextBox();
             this.buttonClear = new System.Windows.Forms.Button();
             this.groupBoxData = new System.Windows.Forms.GroupBox();
+            this.paneFloat32 = new System.Windows.Forms.GroupBox();
+            this.radioFloat32LE = new System.Windows.Forms.RadioButton();
+            this.radioFloat32BE = new System.Windows.Forms.RadioButton();
             this.groupBox1.SuspendLayout();
+            this.paneFloat32.SuspendLayout();
             this.SuspendLayout();
             // 
             // groupBox1
@@ -48,6 +52,7 @@
             this.groupBox1.Controls.Add(this.txtStartAdress);
             this.groupBox1.Controls.Add(this.buttonClear);
             this.groupBox1.Controls.Add(this.groupBoxData);
+            this.groupBox1.Controls.Add(this.paneFloat32);
             this.groupBox1.Location = new System.Drawing.Point(3, 3);
             this.groupBox1.Name = "groupBox1";
             this.groupBox1.Size = new System.Drawing.Size(833, 386);
@@ -119,6 +124,41 @@
             this.groupBoxData.TabIndex = 17;
             this.groupBoxData.TabStop = false;
             // 
+            // paneFloat32
+            // 
+            this.paneFloat32.Controls.Add(this.radioFloat32LE);
+            this.paneFloat32.Controls.Add(this.radioFloat32BE);
+            this.paneFloat32.Location = new System.Drawing.Point(402, 8);
+            this.paneFloat32.Name = "paneFloat32";
+            this.paneFloat32.Size = new System.Drawing.Size(115, 37);
+            this.paneFloat32.TabIndex = 3;
+            this.paneFloat32.TabStop = false;
+            this.paneFloat32.Text = "Float32 endianness";
+            // 
+            // radioFloat32LE
+            // 
+            this.radioFloat32LE.AutoSize = true;
+            this.radioFloat32LE.Enabled = false;
+            this.radioFloat32LE.Location = new System.Drawing.Point(62, 17);
+            this.radioFloat32LE.Name = "radioFloat32LE";
+            this.radioFloat32LE.Size = new System.Drawing.Size(38, 17);
+            this.radioFloat32LE.TabIndex = 2;
+            this.radioFloat32LE.Text = "LE";
+            this.radioFloat32LE.UseVisualStyleBackColor = true;
+            // 
+            // radioFloat32BE
+            // 
+            this.radioFloat32BE.AutoSize = true;
+            this.radioFloat32BE.Checked = true;
+            this.radioFloat32BE.Enabled = false;
+            this.radioFloat32BE.Location = new System.Drawing.Point(8, 17);
+            this.radioFloat32BE.Name = "radioFloat32BE";
+            this.radioFloat32BE.Size = new System.Drawing.Size(39, 17);
+            this.radioFloat32BE.TabIndex = 1;
+            this.radioFloat32BE.TabStop = true;
+            this.radioFloat32BE.Text = "BE";
+            this.radioFloat32BE.UseVisualStyleBackColor = true;
+            // 
             // DataTab
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
@@ -128,6 +168,8 @@
             this.Size = new System.Drawing.Size(840, 395);
             this.groupBox1.ResumeLayout(false);
             this.groupBox1.PerformLayout();
+            this.paneFloat32.ResumeLayout(false);
+            this.paneFloat32.PerformLayout();
             this.ResumeLayout(false);
 
         }
@@ -142,5 +184,9 @@
         protected System.Windows.Forms.TextBox txtStartAdress;
         protected System.Windows.Forms.Button buttonClear;
         protected System.Windows.Forms.GroupBox groupBoxData;
+
+        private System.Windows.Forms.GroupBox paneFloat32;
+        private System.Windows.Forms.RadioButton radioFloat32LE;
+        private System.Windows.Forms.RadioButton radioFloat32BE;
     }
 }

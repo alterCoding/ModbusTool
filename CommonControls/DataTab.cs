@@ -213,7 +213,7 @@ namespace Modbus.Common
                         screenY = screenY + txtData.Size.Height + 5;
                         labData.Text = Convert.ToString(StartAddress + idxControl);
                         break;
-                    case DisplayFormat.FloatReverse:
+                    case DisplayFormat.Float32:
                         // Float values require two registers, thus skip every second control
                         // hide even controls
                         labData.Text = Convert.ToString(StartAddress + idxControl);
@@ -475,7 +475,7 @@ namespace Modbus.Common
                             case DisplayFormat.Integer:
                                 ctrl.Text = data[x].ToString(CultureInfo.InvariantCulture);
                                 break;
-                            case DisplayFormat.FloatReverse:
+                            case DisplayFormat.Float32:
                                 uint twoWords = ((uint)data[x] << 16) + data[x + 1];
                                 float r = BitConverter.ToSingle(BitConverter.GetBytes(twoWords), 0);
                                 formatFloat(r, editBox);

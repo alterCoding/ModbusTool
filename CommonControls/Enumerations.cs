@@ -11,7 +11,7 @@ namespace Modbus.Common
         Binary,
         Hex,
         Integer,
-        FloatReverse
+        Float32
     }
 
     public enum CommunicationMode

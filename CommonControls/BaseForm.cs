@@ -330,7 +330,7 @@ namespace Modbus.Common
                         else if (value.Contains("."))
                         {
                             //floating-point have been stored with neutral culture
-                            fmt = DisplayFormat.FloatReverse;
+                            fmt = DisplayFormat.Float32;
                             is32bit = true;
                         }
 
@@ -360,7 +360,7 @@ namespace Modbus.Common
                             else
                                 rcount++;
                         }
-                        else if(fmt == DisplayFormat.FloatReverse)
+                        else if(fmt == DisplayFormat.Float32)
                         {
                             //floating-point have been stored with neutral culture --
 
@@ -491,7 +491,7 @@ namespace Modbus.Common
                 case DisplayFormat.LED:
                     radioButtonLED.Checked = true;
                     break;
-                case DisplayFormat.FloatReverse:
+                case DisplayFormat.Float32:
                     radioButtonReverseFloat.Checked = true;
                     break;
             }
@@ -518,7 +518,7 @@ namespace Modbus.Common
                 case DisplayFormat.LED:
                     suffix = "_LED_";
                     break;
-                case DisplayFormat.FloatReverse:
+                case DisplayFormat.Float32:
                     suffix = "_Fpt_";
                     is32bit = true;
                     break;
@@ -538,7 +538,7 @@ namespace Modbus.Common
                 {
                     using (var w = new StreamWriter(s))
                     {
-                        ushort regCount = (ushort)(DisplayFormat.FloatReverse == DisplayFormat ? 2 : 1);
+                        ushort regCount = (ushort)(DisplayFormat.Float32 == DisplayFormat ? 2 : 1);
 
                         while(offset < end)
                         {
@@ -556,7 +556,7 @@ namespace Modbus.Common
                                     data = _registerData[offset];
                                     w.Write(string.Format("0x{0:x4}", data));
                                     break;
-                                case DisplayFormat.FloatReverse:
+                                case DisplayFormat.Float32:
                                     float f32 = Marshaller.FloatFromBinary(new ArraySegment<ushort>(_registerData, offset, 2), Endianness.BE);
                                     w.Write(f32.ToString("E9", CultureInfo.InvariantCulture));
                                     break;
@@ -671,11 +671,11 @@ namespace Modbus.Common
             set
             {
                 showDataLength = value;
-                foreach (DataTab tab in tabPage1.Controls)
+                foreach (var tab in tabPage1.Controls.OfType<DataTab>())
                 {
                     tab.ShowDataLength = value;
                 }
-                foreach (DataTab tab in tabPage2.Controls)
+                foreach (var tab in tabPage2.Controls.OfType<DataTab>())
                 {
                     tab.ShowDataLength = value;
                 }
@@ -879,7 +879,7 @@ namespace Modbus.Common
                     case DisplayFormat.Integer:
                         radioButtonInteger.Checked = true;
                         break;
-                    case DisplayFormat.FloatReverse:
+                    case DisplayFormat.Float32:
                         radioButtonReverseFloat.Checked = true;
                         break;
                 }
@@ -1010,7 +1010,7 @@ namespace Modbus.Common
             get
             {
                 var tab = tabControl1.SelectedTab;
-                return (DataTab)tab.Controls[0];
+                return tab.Controls.OfType<DataTab>().First();
             }
         }
 
