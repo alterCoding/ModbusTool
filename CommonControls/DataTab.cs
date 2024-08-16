@@ -1,15 +1,26 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Drawing;
-using System.Data;
-using System.Globalization;
-using System.Linq;
-using System.Text;
 using System.Windows.Forms;
 
 namespace Modbus.Common
 {
+    using BCL;
+
+    /// <summary>
+    /// A registers page
+    /// </summary>
+    /// <remarks>
+    /// <para>About endianness:<br/>
+    /// The settled endianness for encoding targets effective word-encoding. 'Effective' means 'assumed' as it reflects
+    /// how the system should interpret contiguous native registers (16bit) to render a larger register. There is no 
+    /// 'true' encoding since it finally depends on how the target peer will wrap/unwrap bytes. Besides, there is no
+    /// endianness option at byte-level as the modbus (at bytes level) remains a general Big-Endian encoding<br/>
+    /// The settled endianness for encoding affects the underlying buffer data. Conversely, when one swaps the endianness
+    /// for displaying, the underlying registers are not modified.<br/>
+    /// The default floating-point encoding is LittleEndian (word-level)
+    /// </para>
+    /// </remarks>
     public partial class DataTab : UserControl
     {
         protected int _displayCtrlCount;
@@ -28,83 +39,183 @@ namespace Modbus.Common
         private Action _releaseData;
 
         /// <summary>
-        /// keeps the last input text in register editBox(es)
+        /// Floating point effective word encoding. LittleEndian is a common choice
         /// </summary>
-        private string _lastInput;
+        private Endianness _floatEncoding;
+
+        /// <summary>
+        /// Default word encoding. Applied to virtual integer registers. BigEndian is the default
+        /// </summary>
+        private Endianness _globalEncoding = Endianness.BE;
+
+        /// <summary>
+        /// swap endianness (for display purpose only)
+        /// </summary>
+        private bool _swapFloatEndianness;
+
+        private DisplayFormat _dispFormat;
+
+        private bool _isDirty;
+
+        private bool _addrIsHexaFormatted;
+
+        /// <summary>
+        /// Defer the whole data table rebuild
+        /// </summary>
+        private bool _deferUIupdate;
+
+        /// <summary>
+        /// internal flag to prevent from redundant buffer updates due to ui feedback
+        /// </summary>
+        private bool _lockBufferUpdate;
+
+        /// <summary>
+        /// flag to emit an info warning before the endianness change
+        /// </summary>
+        private bool _warnToggleEndianness = true;
+
+        /// <summary>
+        /// registers count
+        /// </summary>
+        /// <remarks>CODE SMELL: <see cref="DataLength"/></remarks>
+        private ushort _regCount;
+
+        private ushort[] _registersData;
+
+        private ModbusRegistersBuffer _buffer;
+
+        private TextBoxHandlers _textBoxHandlers;
+
+        private ArithmeticValueFormat addrValueFormat
+        {
+            get => AddrIsHexaFormatted ? ArithmeticValueFormat.hexa : ArithmeticValueFormat.@decimal;
+        }
+
+        /// <summary>
+        /// Get the endianness that is used for displaying floating point. It's the settled endianness encoding which
+        /// might be reversed according to the 'swap' rendering alternative 
+        /// </summary>
+        private Endianness displayedFloatEndianness
+        {
+            get => _swapFloatEndianness ? _floatEncoding.Swapped() : _floatEncoding;
+        }
+
+        /// <summary>
+        /// Get the actual word endianness. It depends on the displayed format. 
+        /// </summary>
+        private Endianness actualEncoding
+        {
+            get => _dispFormat == DisplayFormat.Float32 ? FloatEncodingEndianness : _globalEncoding;
+        }
+
+        /// <summary>
+        /// Some properties have been modified, which make pending an ui data-table update, needed for consistently 
+        /// rendering the underlying registers buffer. It is not about the data table values, but about the structure
+        /// </summary>
+        private bool dataTableIsDirty
+        {
+            set
+            {
+                if (value) buttonApply.Text = "Apply*";
+                else buttonApply.Text = "Apply";
+
+                _isDirty = value;
+            }
+        }
+
+        /** 
+         * Must use monospace fonts to better sizing the fixed layout. Consolas should be available on all Windoze 
+         * platforms
+         * NOTE: a lot of fonts don't support the whole block of superscript/subscript characters, especially the small
+         * 'h', which is used for hexa mode indication (only a few basic fonts support it such as Tahoma, TimesNewRoman,
+         * or even Segoe ... but they are not monospace). Most modern alternative such as consolas, cascadia are mono
+         * but they don't support the whole super/sub/script block. Nevertheless, it does not really matter as some 
+         * suitable substitution (should) occur
+         */
+        private Font _labelFont = new Font("Consolas", 7.75f, FontStyle.Regular, GraphicsUnit.Point, 0);
+        /** 
+         * better rendering for small typo with lucida than consolas or cascadia. Courier-new is awful. And others
+         * fonts might be unvailable on some platforms
+         */
+        private Font _labelSmallFont = new Font("Lucida Console", 6.8f, FontStyle.Regular, GraphicsUnit.Point, 0);
+        private Font _dataTableFont = new Font("Consolas", 9f, FontStyle.Regular, GraphicsUnit.Point, 0);
+        private Font _dataTableSmallFont = new Font("Consolas", 8.50f, FontStyle.Regular, GraphicsUnit.Point, 0);
+
+        /// <summary>
+        /// For float-format: arbitrary limit of output size to fit in textbox
+        /// </summary>
+        private readonly FormatOptions _uiFloatFormat = new FormatOptions(ArithmeticValueFormat.@decimal, maxLen: 10);
+        private readonly FormatOptions _uiHexFormat = FormatOptions.Default(ArithmeticValueFormat.hexa);
+        private readonly FormatOptions _uiIntFormat = FormatOptions.Default(ArithmeticValueFormat.@decimal);
+        private readonly FormatOptions _uiBinFormat = new FormatOptions(ArithmeticValueFormat.binary, useAlt: true);
+
+        /// <summary>
+        /// The 1th place to customize formatting
+        /// </summary>
+        private readonly ValueFormatting _formatting = FormattedValue.Default;
 
         public DataTab()
         {
             InitializeComponent();
+
+            _textBoxHandlers = new TextBoxHandlers(this, _formatting);
+
+            var options = new TextBoxOptions()
+            {
+                BelongToActiveRegistersScope = true,
+                HasActiveFocusDecoration = false
+            };
+
+            //event handling: when address changes, we flag the data table as refresh needed
+            FormatOptions format = AddrIsHexaFormatted ? _uiHexFormat : _uiIntFormat;
+            _textBoxHandlers.Initialize<ushort>(txtStartAdress, 0xffff, -1, format, options)
+                .OnValueChanged += (_, evt) => dataTableIsDirty = true;
         }
 
         #region properties
 
         public ushort StartAddress
         {
-            get
-            {
-                ushort rVal = 0;
-                try
-                {
-                    if (txtStartAdress.Text.IndexOf("0x", 0, txtStartAdress.Text.Length) == 0)
-                    {
-                        string str = txtStartAdress.Text.Replace("0x", "");
-                        rVal = Convert.ToUInt16(str, 16);
-                    }
-                    // bugfix "not accepting hex register address"
-                    else
-                        rVal = Convert.ToUInt16(txtStartAdress.Text);
-                }
-                catch (Exception)
-                {
-                    txtStartAdress.Text = "0";
-                }
-                return rVal;
-            }
+            get => (txtStartAdress.Tag as MBNativeDataItem<ushort>).Value.Value;
             set
             {
-                txtStartAdress.Text = Convert.ToString(value);
+                var data = txtStartAdress.Tag as MBNativeDataItem<ushort>;
+                txtStartAdress.Text = data.Update(value);
             }
         }
 
+        /// <summary>
+        /// The registers count that may be relevant for the actual modbus operation (and a hint for the table layout)
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// [1-125] is the accepted values range (modbus spec) for HR/IR, but [1-2000] for DI/CO. For now, we are stuck
+        /// with the native registers limit
+        /// </para>
+        /// <para>CODE SMELL:<br/>
+        /// - it reflects the number of the registers that will actually related to the UI settled modbus operation <br/>
+        /// - it must not be confused with the displayed registers count, which depends on the window layout and size 
+        ///  (which is more or less static ...). The displayed registers count may be greater when _regCount is lesser
+        ///  than the layout capacity. And for sure, the displayed count is lesser when _regCount exceeds the layout
+        ///  capacity.<br/>
+        /// - it may be definitely confusing as the register type coils/DI are defined at bit-level, whereas the type
+        /// HR/IR are defined at word level. Last but not least, when one refers to extended registers, we could tell
+        /// about contiguous native registers, but also about whole extended registers (dword or qword) <br/>
+        /// - in other words, the displayed registers are a subset or a superset of the actual sent/received registers
+        /// </para>
+        /// </remarks>
         public ushort DataLength
         {
-            get
-            {
-                ushort rVal = 64;
-                try
-                {
-                    if (txtSize.Text.StartsWith("0x", StringComparison.InvariantCultureIgnoreCase))
-                    {
-                        string str = txtSize.Text.Replace("0x", "");
-                        rVal = Convert.ToUInt16(str, 16);
-                    }
-                    else
-                        rVal = Convert.ToUInt16(txtSize.Text);
-                }
-                catch (Exception)
-                {
-                    txtSize.Text = "64";
-                }
-                return rVal;
-            }
+            get => _regCount;
+
             set
             {
-                if (txtSize.Text.StartsWith("0x", StringComparison.InvariantCultureIgnoreCase))
-                {
-                    // obey hex input
-                    txtSize.Text = "0x"+Convert.ToString(value, 16);
-                }
-                else
-                    txtSize.Text = Convert.ToString(value);
-            }
-        }
+                if (_regCount == value) return;
+                else dataTableIsDirty = true;
 
-        private void txtSize_TextChanged(object sender, EventArgs e)
-        {
-            if (DataLength > 127)
-            {
-                DataLength = 127;
+                //modbus limit
+                _regCount = Math.Max((ushort)1, Math.Min(value, (ushort)125));
+                txtSize.Text = _regCount.ToString();
             }
         }
 
@@ -123,8 +234,80 @@ namespace Modbus.Common
 
         public event EventHandler OnApply;
 
-        public ushort[] RegisterData { get; set; }
-        public DisplayFormat DisplayFormat { get; set; }
+        /// <summary>
+        /// Reference onto the underlying registers values buffer
+        /// </summary>
+        public ushort[] RegisterData
+        {
+            get => _registersData;
+            set
+            {
+                if (_registersData == value) return;
+                else _registersData = value;
+
+                _buffer = new ModbusRegistersBuffer(value);
+
+                dataTableIsDirty = true;
+            }
+        }
+
+        /// <summary>
+        /// The format for rendering the displayed sub-part of the underlying registers buffer 
+        /// </summary>
+        /// <remarks>The data table is not updated, call <see cref="UpdateDataTable"/> when all property</remarks>
+        public DisplayFormat DisplayFormat
+        {
+            get => _dispFormat;
+            set
+            {
+                if (_dispFormat == value) return;
+                else _dispFormat = value;
+
+                paneFloatEncoding.Enabled = value == DisplayFormat.Float32;
+                dataTableIsDirty = true;
+            }
+        }
+
+        /// <summary>
+        /// The actual word-endianness for encodineg floating-point into the underlying buffer
+        /// </summary>
+        /// <remarks>UI is not updated</remarks>
+        public Endianness FloatEncodingEndianness
+        {
+            get => _floatEncoding;
+
+            set
+            {
+                if (value != _floatEncoding)
+                {
+                    _deferUIupdate = true;
+
+                    _floatEncoding = value;
+                    if (_floatEncoding == Endianness.BE) radioFloatBE.Checked = true;
+                    else if (_floatEncoding == Endianness.LE) radioFloatLE.Checked = true;
+                }
+            }
+        }
+
+        /// <summary>
+        /// When TRUE, even if any prefix '0x' doesn't prepend an address value, we assume it's or it should be an hexa 
+        /// formatted address value
+        /// </summary>
+        public bool AddrIsHexaFormatted
+        {
+            get => _addrIsHexaFormatted;
+            set
+            {
+                if (_addrIsHexaFormatted == value) return;
+                else _addrIsHexaFormatted = value;
+
+                //if general directive has been changed, we need to broadcast the change to the inner value
+                var addr = txtStartAdress.Tag as MBDataItem<ushort>;
+                addr.Formatting = value ? _uiHexFormat : _uiIntFormat;
+                txtStartAdress.Text = addr.Text;
+                txtStartAdress.MaxLength = _formatting.GetMaxLengthOutput(TypeCode.UInt16, addrValueFormat);
+            }
+        }
 
         #endregion
 
@@ -139,278 +322,198 @@ namespace Modbus.Common
             _releaseData = release;
         }
 
+        /// <summary>
+        /// Should the settled encoding endianness be swapped for floating point displaying. Notice that the underlying
+        /// registers values are not affected by this feature (which is a convenience-only purpose to help to debug or
+        /// understand the data flow)
+        /// </summary>
+        /// <param name="updateUI">micro opt to delay the ui refreshing</param>
+        public void SwapFloatEndianness(bool swap = true, bool updateUI = true)
+        {
+            if (_swapFloatEndianness != swap)
+            {
+                _swapFloatEndianness = swap;
+                UpdateDataTable();
+            }
+        }
+
+        private string getActiveBufferAddressRange()
+        {
+            return $"[{FormattedValue.Format(StartAddress, addrValueFormat)}-{FormattedValue.Format(StartAddress+DataLength, addrValueFormat)}]";
+        }
+
         #region Data Table
 
         public void RefreshData()
         {
+            const int binTextBoxWidth = 120;
+            const int regularTextBoxWidth = 55; //size for hex|int 
+            const int addrTextBoxWidth = 35; //addr label size
+            const int longAddrTextBoxWidth = 55;
+            const int fptTextBoxWidth = 71; //size for floating-point
+            const int textBoxHeight = 20;
+            const int regularTextBoxColumnMarginL = 40; //offset.x (must exceed addr-label size)
+            const int fptTextBoxColumnMarginL = 35; //offset.x 
+            const int regularTextBoxColumnMarginR = 10; //padding after textbox 
+            const int binTextBoxColumnMarginR = 6;
+            const int textBoxRowPadding = 5; //margin H for next textboxes row
+            const int regularColumnSize = regularTextBoxColumnMarginL + regularTextBoxWidth + regularTextBoxColumnMarginR;
+            const int binaryColumnSize = regularTextBoxColumnMarginL + binTextBoxWidth + binTextBoxColumnMarginR;
+
+            //if addr is not hex-mode, we need 5 digits instead of 4+sub
+            bool smallerFont = AddrIsHexaFormatted == false;
+
             // Create as many textboxes as fit into window
             groupBoxData.Visible = false;
             groupBoxData.Controls.Clear();
             var idxControl = 0;
-            var screenX = 5;
-            var screenY = 20;
-            while (screenX < groupBoxData.Size.Width - 100)
+            var screen = new Point(0, 20);
+
+            ushort offset = StartAddress;
+
+            //using alternative format for address labels
+            FormatOptions addrFormat = new FormatOptions(addrValueFormat, useAlt: true);
+
+            while (screen.X < groupBoxData.Size.Width - 95)
             {
                 var labData = new Label();
                 groupBoxData.Controls.Add(labData);
-                labData.Size = new Size(38, 20);
-                labData.Location = new Point(screenX, screenY);
-                labData.Font = new Font("Calibri", 8.25F, FontStyle.Regular, GraphicsUnit.Point, 0);
+                labData.Location = screen;
+                labData.Font = smallerFont ? _labelSmallFont : _labelFont;
+                labData.TextAlign = ContentAlignment.MiddleRight;
+                labData.Margin = Padding.Empty;
+
+                if (_dispFormat != DisplayFormat.LED)
+                {
+                    labData.Size = new Size(addrTextBoxWidth, textBoxHeight);
+                    labData.Text = FormattedValue.Format((ushort)(offset + idxControl), addrFormat);
+                }
+                else
+                {
+                    labData.Size = new Size(longAddrTextBoxWidth, textBoxHeight);
+                    labData.Text = $"{FormattedValue.Format((ushort)(offset + idxControl / 16), addrFormat)}.{idxControl % 16}";
+                }
+
+                TextBox tbox = null;
+
                 switch (DisplayFormat)
                 {
                     case DisplayFormat.LED:
+                    {
                         var bulb = new LedBulb();
                         groupBoxData.Controls.Add(bulb);
                         bulb.Size = new Size(25, 25);
-                        bulb.Location = new Point(screenX + 40, screenY - 5);
+                        bulb.Location = screen + new Size(55, -5);
                         bulb.Padding = new Padding(3);
                         bulb.Color = Color.Red;
                         bulb.On = false;
                         bulb.Tag = idxControl;
+                        bulb.Enabled = (idxControl / 16) < _regCount;
                         bulb.Click += BulbClick;
-                        screenY = screenY + bulb.Size.Height + 10;
-                        labData.Text = Convert.ToString(idxControl);
+                        screen.Offset(0, bulb.Size.Height + 10);
                         break;
+                    }
                     case DisplayFormat.Binary:
-                        var txtDataB = new TextBox();
-                        groupBoxData.Controls.Add(txtDataB);
-                        txtDataB.Size = new Size(110, 20);
-                        txtDataB.Location = new Point(screenX + 40, screenY - 2);
-                        txtDataB.TextAlign = HorizontalAlignment.Right;
-                        txtDataB.Tag = idxControl;
-                        txtDataB.Leave += TxtDataBinaryLeave;
-                        txtDataB.Enter += txtData_Enter;
-                        txtDataB.KeyPress += txtDataBinaryKeyPress;
-                        txtDataB.MaxLength = 16;
-                        screenY = screenY + txtDataB.Size.Height + 5;
-                        labData.Text = Convert.ToString(StartAddress + idxControl);
+                    {
+                        tbox = makeNumericTextBox<ushort>(idxControl, _uiBinFormat, 
+                            new Size(binTextBoxWidth, textBoxHeight), //extended size
+                            x:regularTextBoxColumnMarginL,//relative location of textbox.left.x from current screen pos
+                            _dataTableFont,
+                            ref screen); //current screen pos is moved to the next control
                         break;
+                    }
                     case DisplayFormat.Hex:
-                        var txtDataH = new TextBox();
-                        groupBoxData.Controls.Add(txtDataH);
-                        txtDataH.Size = new Size(55, 20);
-                        txtDataH.Location = new Point(screenX + 40, screenY - 2);
-                        txtDataH.TextAlign = HorizontalAlignment.Right;
-                        txtDataH.Tag = idxControl;
-                        txtDataH.MaxLength = 5;
-                        txtDataH.Leave += TxtDataHexLeave;
-                        txtDataH.Enter += txtData_Enter;
-                        txtDataH.KeyPress += txtDataHexKeyPress;
-                        screenY = screenY + txtDataH.Size.Height + 5;
-                        labData.Text = Convert.ToString(StartAddress + idxControl);
+                    {
+                        tbox = makeNumericTextBox<ushort>(idxControl, _uiHexFormat, 
+                            new Size(regularTextBoxWidth, textBoxHeight),
+                            x:regularTextBoxColumnMarginL, 
+                            _dataTableFont,
+                            ref screen);
                         break;
+                    }
                     case DisplayFormat.Integer:
-                        var txtData = new TextBox();
-                        groupBoxData.Controls.Add(txtData);
-                        txtData.Size = new Size(55, 20);
-                        txtData.Location = new Point(screenX + 40, screenY - 2);
-                        txtData.TextAlign = HorizontalAlignment.Right;
-                        txtData.Tag = idxControl;
-                        txtData.MaxLength = 5;
-                        txtData.Leave += TxtDataLeave;
-                        txtData.Enter += txtData_Enter;
-                        txtData.KeyPress += txtDataIntegerKeyPress;
-                        screenY = screenY + txtData.Size.Height + 5;
-                        labData.Text = Convert.ToString(StartAddress + idxControl);
+                    {
+                        tbox = makeNumericTextBox<short>(idxControl, _uiIntFormat, 
+                            new Size(regularTextBoxWidth, textBoxHeight),
+                            x:regularTextBoxColumnMarginL, 
+                            _dataTableFont,
+                            ref screen);
                         break;
+                    }
                     case DisplayFormat.Float32:
-                        // Float values require two registers, thus skip every second control
-                        // hide even controls
-                        labData.Text = Convert.ToString(StartAddress + idxControl);
-                        if ((idxControl & 1) == 0)
-                        {
-                            var txtFloatReverse = new TextBox();
-                            groupBoxData.Controls.Add(txtFloatReverse);
-                            txtFloatReverse.Size = new Size(62, 40);
-                            txtFloatReverse.Location = new Point(screenX + 38, screenY - 2);
-                            txtFloatReverse.TextAlign = HorizontalAlignment.Right;
-                            txtFloatReverse.Tag = idxControl;
-                            txtFloatReverse.Leave += TxtFloatReverseLeave;
-                            txtFloatReverse.Enter += TxtFloatReverse_Enter;
-                            txtFloatReverse.KeyPress += txtDataFloatReverseKeyPress;
-                            screenY = screenY + txtFloatReverse.Size.Height *2 + 10; // Float Values Require Two Registers
-                            labData.Visible = true;
-                        }
-                        else
-                        {
-                            labData.Visible = false;
-                        }
-                        break;
+                    // Float values require two registers, thus skip every second control (thus hide even controls)
+                    if ((idxControl & 1) == 0)
+                    {
+                        tbox = makeNumericTextBox<float>(idxControl, _uiFloatFormat, 
+                            new Size(fptTextBoxWidth, textBoxHeight),
+                            x: fptTextBoxColumnMarginL, 
+                            _dataTableSmallFont,
+                            ref screen);
+
+                        //skip 1 row
+                        screen.Offset(0, textBoxHeight + textBoxRowPadding); // Float Values Require Two Registers
+                    }
+                    else
+                    {
+                        labData.Visible = false;
+                    }
+                    break;
                 }
 
+                if (tbox != null) groupBoxData.Controls.Add(tbox);
+
                 idxControl++;
-                if (screenY > groupBoxData.Size.Height - 30)
+
+                if (screen.Y > groupBoxData.Size.Height - 30) //30: arbitrary margin
                 {
-                    var inc = DisplayFormat == DisplayFormat.Binary ? 200 : 100;
-                    screenX = screenX + inc;
-                    screenY = 20;
+                    //start a new column
+                    screen.X += DisplayFormat == DisplayFormat.Binary ? binaryColumnSize : regularColumnSize;
+                    screen.Y = textBoxHeight;
                 }
             }
+
             _displayCtrlCount = idxControl;
             UpdateDataTable();
             groupBoxData.Visible = true;
-        }
 
-        void txtDataBinaryKeyPress(object sender, KeyPressEventArgs e)
-        {
-            const char Delete = (char)8;
-            // this will only allow valid binary values [0-1] [delete] to be entered. 
-            char c = e.KeyChar;
-            if (c != '\b' && c != 0x30 && c != 0x31 && c != Delete)
+            dataTableIsDirty = false;
+
+            TextBox makeNumericTextBox<TVal>(int index, FormatOptions format, Size size, int x, Font font, ref Point lscreen)
+                where TVal : unmanaged, IConvertible, IFormattable, IEquatable<TVal>
             {
-                e.Handled = true;
+                var options = new TextBoxOptions()
+                {
+                    //regCount is adjusted with sizeof(val) to evince partial extended register (i.e to align on dword or 
+                    //qword boundary)
+                    BelongToActiveRegistersScope = index < _regCount - (_regCount % PrimitiveTraits<TVal>.Size),
+                    HasActiveFocusDecoration = true
+                };
+                var tbox = new TextBox();
+
+                var handling = _textBoxHandlers.Initialize<TVal>(tbox, (ushort)(StartAddress + index), index, format, options);
+                handling.OnValueChanged += onUIRegisterValueChanged;
+
+                tbox.Font = font;
+                tbox.TextAlign = HorizontalAlignment.Right;
+                tbox.Margin = Padding.Empty;
+                tbox.Size = size;
+                tbox.Location = lscreen + new Size(x, -2);
+
+                //goto next control
+                lscreen.Offset(0, size.Height + textBoxRowPadding);
+
+                return tbox;
             }
         }
-
-        void txtDataHexKeyPress(object sender, KeyPressEventArgs e)
-        {
-            const char Delete = (char)8;
-            // this will only allow valid hex values [0-9][a-f][A-F] [delete] to be entered. 
-            char c = e.KeyChar;
-            if (c != '\b' && !((c <= 0x66 && c >= 61) || (c <= 0x46 && c >= 0x41) || (c >= 0x30 && c <= 0x39)) && c != Delete)
-            {
-                e.Handled = true;
-            }
-        }
-
-        void txtDataIntegerKeyPress(object sender, KeyPressEventArgs e)
-        {
-            const char Delete = (char)8;
-            e.Handled = !Char.IsDigit(e.KeyChar) && e.KeyChar != Delete;
-        }
-
-        void txtDataFloatReverseKeyPress(object sender, KeyPressEventArgs e)
-        {
-            const char Delete = (char)8;
-            e.Handled = !Char.IsDigit(e.KeyChar) && e.KeyChar != Delete && e.KeyChar != NumberFormatInfo.CurrentInfo.NumberDecimalSeparator[0];
-        }
-
-        void txtData_Enter(object sender, EventArgs e)
-        {
-            var textBox = (TextBox)sender;
-            if (!String.IsNullOrEmpty(textBox.Text))
-            {
-                _lastInput = textBox.Text;
-                textBox.Clear();
-            }
-        }
-
-        void TxtFloatReverse_Enter(object sender, EventArgs e)
-        {
-            var textBox = (TextBox)sender;
-            if (!String.IsNullOrEmpty(textBox.Text))
-            {
-                _lastInput = textBox.Text;
-                textBox.Clear();
-            }
-        }
-
-        void TxtDataLeave(object sender, EventArgs e)
-        {
-            var textBox = (TextBox)sender;
-            var textBoxNumber = Int32.Parse(textBox.Tag.ToString());
-            UInt16 res;
-
-            if(textBox.Text == string.Empty)
-            {
-                //if we have inputted 'nothing', we restore the last input text
-                textBox.Text = _lastInput;
-            }
-            else if (UInt16.TryParse(textBox.Text, out res))
-            {
-                setRegister((ushort)(StartAddress + textBoxNumber), res);
-            }
-            else
-            {
-                textBox.Text = "0";
-            }
-        }
-
-        void TxtFloatReverseLeave(object sender, EventArgs e)
-        {
-            var textBox = (TextBox)sender;
-            var textBoxNumber = Int32.Parse(textBox.Tag.ToString());
-            float res;
-
-            if(textBox.Text == string.Empty)
-            {
-                //if we have inputted 'nothing', we restore the last input text
-                textBox.Text = _lastInput;
-            }
-            else if (float.TryParse(textBox.Text, out res))
-            {
-                var intRes = BitConverter.ToUInt32(BitConverter.GetBytes(res), 0);
-                var firstPart = (ushort) (intRes >> 16);
-                var secondPart = (ushort)(intRes & 0xFFFF);
-
-                setRegisters((ushort)(StartAddress + textBoxNumber), firstPart, secondPart);
-
-                formatFloat(res, textBox); //(re)format
-            }
-            else
-            {
-                textBox.Text = "0.0";
-            }
-        }
-
-        void TxtDataHexLeave(object sender, EventArgs e)
-        {
-            var textBox = (TextBox)sender;
-            var textBoxNumber = Int32.Parse(textBox.Tag.ToString());
-            ushort res;
-
-            if(textBox.Text == string.Empty)
-            {
-                //if we have inputted 'nothing', we restore the last input text
-                textBox.Text = _lastInput;
-            }
-            else if (UInt16.TryParse(textBox.Text, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out res))
-            {
-                setRegister((ushort)(StartAddress + textBoxNumber), res);
-
-                textBox.Text = string.Format("0x{0}", textBox.Text.ToLower().PadLeft(4, '0'));
-            }
-            else
-            {
-                textBox.Text = "0x0000";
-            }
-        }
-
-        void TxtDataBinaryLeave(object sender, EventArgs e)
-        {
-            var textBox = (TextBox)sender;
-            var textBoxNumber = Int32.Parse(textBox.Tag.ToString());
-
-            if(textBox.Text == string.Empty)
-            {
-                //if we have inputted 'nothing', we restore the last input text
-                textBox.Text = _lastInput;
-                return;
-            }
- 
-            try
-            {
-                setRegister((ushort)(StartAddress + textBoxNumber), Convert.ToUInt16(textBox.Text, 2));
-
-                textBox.Text = textBox.Text.PadLeft(16, '0');
-            }
-            catch (Exception)
-            {
-                textBox.Text = "0000000000000000";
-            }
-        }
-
 
         private void BulbClick(object sender, EventArgs e)
         {
             var bulb = (LedBulb)sender;
             bulb.On = !bulb.On;
-            var bulbNumber = Int32.Parse(bulb.Tag.ToString());
+            int bulbNumber = Convert.ToInt32(bulb.Tag);
             var index = bulbNumber / 16;
-            var bulbHiByte = (bulbNumber & 0x0008) != 0;
-            ushort shifter = bulbHiByte ? (ushort)0x0001 : (ushort)0x0100;
-            var shift = bulbNumber & 0x0007;
-            var mask = Convert.ToUInt16(shifter << shift);
+            int bit = bulbNumber % 16;
+            ushort mask = (ushort)(0x1 << bit);
 
             try
             {
@@ -429,31 +532,19 @@ namespace Modbus.Common
             finally { _releaseData?.Invoke(); }
         }
 
-
-        public void UpdateDataTable()
+        /// <summary>
+        /// Update the UI with the supplied registers values
+        /// </summary>
+        /// <param name="data">the registers sub-part copy</param>
+        private void updateDataTable(ushort[] data)
         {
-            // for float values we need two registers for one value
-            // add one extra data value for the last control
-            var data = new uint[_displayCtrlCount+1];
+            _deferUIupdate = false;
+            _lockBufferUpdate = true;
 
-            //we keep direct reference on the owner backed data ... as a result, some concurrent access policy must be 
-            //implemented somewhere ...
-
-            try
-            {
-                _lockData?.Invoke();
-
-                for (int i = 0; i < _displayCtrlCount + 1; i++)
-                {
-                    var index = StartAddress + i;
-                    if (index >= RegisterData.Length)
-                    {
-                        break;
-                    }
-                    data[i] = RegisterData[index];
-                }
-            }
-            finally { _releaseData?.Invoke(); }
+            var buffer = new ModbusRegistersBuffer(data, StartAddress);
+            ushort offset = 0;
+            ushort reg_size = (ushort)(_dispFormat.Is32Bit() ? 2 : 1);
+            Endianness endian = _dispFormat != DisplayFormat.Float32 ? Endianness.BE : displayedFloatEndianness;
 
             // ------------------------------------------------------------------------
             // Put new data into text boxes
@@ -461,42 +552,44 @@ namespace Modbus.Common
             {
                 if (ctrl is TextBox editBox)
                 {
-                    int x = Convert.ToInt16(ctrl.Tag);
+                    var dataItem = ctrl.Tag as MBDataItemBase;
+                    int x = dataItem.Index;
+
                     if (x <= data.GetUpperBound(0))
                     {
-                        switch (DisplayFormat)
-                        {
-                            case DisplayFormat.Binary:
-                                ctrl.Text = Convert.ToString(data[x], 2).PadLeft(16, '0');
-                                break;
-                            case DisplayFormat.Hex:
-                                ctrl.Text = String.Format("0x{0:x4}", data[x]);
-                                break;
-                            case DisplayFormat.Integer:
-                                ctrl.Text = data[x].ToString(CultureInfo.InvariantCulture);
-                                break;
-                            case DisplayFormat.Float32:
-                                uint twoWords = ((uint)data[x] << 16) + data[x + 1];
-                                float r = BitConverter.ToSingle(BitConverter.GetBytes(twoWords), 0);
-                                formatFloat(r, editBox);
-                                break;
-                        }
+                        dataItem.ReadFrom(buffer, endian);
+
+                        ctrl.Text = dataItem.Text;
                         ctrl.Visible = true;
+                        offset += reg_size;
                     }
                     else ctrl.Text = "";
                 }
                 else if (ctrl is LedBulb)
                 {
                     var led = (LedBulb)ctrl;
-                    var bulbNumber = Convert.ToInt16(ctrl.Tag);
-                    var index = bulbNumber / 16;
-                    var bulbHiByte = (bulbNumber & 0x0008) != 0;
-                    var shift = bulbNumber & 0x0007;
-                    ushort shifter = bulbHiByte ? (ushort)0x0001 : (ushort)0x0100;
-                    var mask = Convert.ToUInt16(shifter << shift);
-                    led.On = (mask & data[index]) != 0;
+                    var bulbNumber = Convert.ToInt32(ctrl.Tag);
+                    int bit = bulbNumber % 16;
+                    int mask = 0x1 << bit;
+                    led.On = (mask & data[bulbNumber/16]) != 0;
                 }
             }
+
+            _lockBufferUpdate = false;
+        }
+
+        public void UpdateDataTable()
+        {
+            ushort[] data;
+            try
+            {
+                _lockData?.Invoke();
+                data = copyDataRegisters();
+
+            }
+            finally { _releaseData?.Invoke(); }
+
+            updateDataTable(data);
         }
 
         private void buttonApply_Click(object sender, EventArgs e)
@@ -537,31 +630,174 @@ namespace Modbus.Common
 
         #endregion
 
-        private void setRegister(ushort offset, ushort value)
+        #region buffer registers operations
+
+        /// <summary>
+        /// Get a copy of the subset of underlying registers values, which should be displayed
+        /// </summary>
+        /// <returns></returns>
+        private ushort[] copyDataRegisters()
         {
-            try
-            {
-                _lockData?.Invoke();
-                RegisterData[offset] = value;
-            }
-            finally { _releaseData?.Invoke(); }
+            var data = new ushort[_displayCtrlCount * (DisplayFormat.Is32Bit() ? 2 : 1)];
+
+            //we keep direct reference on the owner backed data ... as a result, some concurrent access policy must be 
+            //implemented by the caller somewhere ...
+
+            Array.Copy(RegisterData, StartAddress, data, 0, Math.Min(data.Length, RegisterData.Length - StartAddress));
+
+            return data;
         }
-        private void setRegisters(ushort offset, ushort v1, ushort v2)
+
+        private void onUIRegisterValueChanged(object sender, TextBoxValueChangedEvent evt)
         {
+            if (_lockBufferUpdate) return;
+
+            //safe
+            var data = (sender as TextBox).Tag as MBDataItemBase;
+
             try
             {
                 _lockData?.Invoke();
-                RegisterData[offset] = v1;
-                RegisterData[offset+1] = v2;
+
+                //about word encoding parameter: 
+                //only relevant for float32 register (and future int32)
+                data.WriteTo(_buffer, actualEncoding);
             }
             finally { _releaseData?.Invoke(); }
         }
 
-        private static void formatFloat(float value, TextBox control)
+        #endregion
+
+        #region address and size handling
+
+        private void onRegCountKeyPress(object sender, KeyPressEventArgs e)
         {
-            string text = value.ToString("G");
-            if (text.Length >= 10) text = value.ToString("G5");
-            if (text != control.Text) control.Text = text;
+            e.Handled = !(char.IsDigit(e.KeyChar) || e.KeyChar == '\b'); //backspace ok
         }
+
+        private void txtSize_TextChanged(object sender, EventArgs e)
+        {
+            ushort count;
+            if (!ushort.TryParse(txtSize.Text, out count)) DataLength = 1;
+
+            DataLength = count;
+        }
+
+        #endregion
+
+        #region floating point encoding
+
+        /// <summary>
+        /// Toggles the word endianness of the registers (aligned-2) from StartAddress, thus updating the underlying
+        /// data buffer. The registers pair is swapped, irrespectively of whether the data actually reflect 32bit or 
+        /// just 2 standalone native registers
+        /// </summary>
+        /// <remarks>PRE: lock</remarks>
+        private void toggleWordEndianness()
+        {
+            for (ushort i = StartAddress; i < DataLength - 1; i += 2)
+            {
+                ushort tmp = RegisterData[i];
+                RegisterData[i] = RegisterData[i + 1];
+                RegisterData[i + 1] = tmp;
+            }
+        }
+
+        private void onFloatEncodingChanged()
+        {
+            var endian = radioFloatBE.Checked ? Endianness.BE : Endianness.LE;
+            if (_floatEncoding == endian) return;
+
+            bool swapBuffer = chkSwapBuffer.Checked;
+
+            if (_warnToggleEndianness)
+            {
+                string message;
+
+                if (swapBuffer)
+                    message =
+                $@"You are about to alter the active buffer due to an endianness change.
+As the directive 'Swap buffer' is enabled, each registers 16bit pair will be swapped to keep the current floating point values;
+Only the active buffer subset is involved {getActiveBufferAddressRange()}, but ensure that all registers convey floating point values.
+Click RETRY to change endianness and swap the word order
+Click ABORT to cancel any endianness or buffer change
+Click IGNORE to disable this message for further operation (for now, nothing will be done)
+";
+                else
+                    message =
+                $@"You are about to apply an endianness change w/o any buffer change.
+As the directive 'Swap buffer' is not enabled, current floating point values will be invalidated.
+Only the active buffer subset is involved {getActiveBufferAddressRange()}. If endianness is not consistent across the whole buffer, you might need to review it one by one.
+Click RETRY to change endianness, keeping the word order as-is (only further inputs will consider the actual endianness)
+Click ABORT to cancel any endianness change
+Click IGNORE to disable this message for further operation (for now, nothing will be done)
+";
+                var result = MessageBox.Show(message, "Please review endianness change impacts ...", MessageBoxButtons.AbortRetryIgnore);
+                if (result == DialogResult.Ignore)
+                {
+                    //nothing to be done, besides store the 'do not show this message anymore'
+                    _warnToggleEndianness = false;
+                    restore();
+                    return;
+                }
+                else if(result == DialogResult.Abort)
+                {
+                    restore();
+                    return;
+                }
+                else if(result == DialogResult.Retry)
+                {
+                    //if one doesn't want to swap the buffer, it's (just) an endianness specification that enables further
+                    //(only) input conversions w/o altering the current underlying buffer values ... drawback is that the 
+                    //high level current values are broken
+                }
+                else
+                {//not reached
+                    restore();
+                    return;
+                }
+            }
+            else
+            {
+                //silent mode
+            }
+
+            _floatEncoding = endian;
+
+            ushort[] data;
+            try
+            {
+                _lockData?.Invoke();
+
+                if(swapBuffer) toggleWordEndianness();
+
+                if (_deferUIupdate) return;
+
+                data = copyDataRegisters();
+            }
+            finally { _releaseData?.Invoke(); }
+
+            //update ui
+            updateDataTable(data);
+
+            void restore()
+            {
+                //discard the swap endianness directive
+                if (radioFloatLE.Checked) radioFloatBE.Checked = true;
+                else radioFloatLE.Checked = true;
+            }
+        }
+
+        private void onFloatLEChanged(object sender, EventArgs e)
+        {
+            onFloatEncodingChanged();
+        }
+
+        private void onFloatBEChanged(object sender, EventArgs e)
+        {
+            onFloatEncodingChanged();
+        }
+
+        #endregion
     }
 }

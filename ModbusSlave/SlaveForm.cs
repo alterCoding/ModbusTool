@@ -42,6 +42,14 @@ namespace ModbusSlave
             InitializeComponent();
         }
 
+        protected override void LoadUserData()
+        {
+            //read from file user app config
+            base.LoadUserData();
+
+            DataLength = 125; //limit the register count does not make sense for a slave
+        }
+
         private void SlaveFormClosing(object sender, FormClosingEventArgs e)
         {
             DoDisconnect();

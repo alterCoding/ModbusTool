@@ -47,5 +47,11 @@
     <Setting Name="LastDataDirectory" Type="System.String" Scope="User">
       <Value Profile="(Default)" />
     </Setting>
+    <Setting Name="FPTEndianness" Type="Modbus.Common.Endianness" Scope="User">
+      <Value Profile="(Default)">LE</Value>
+    </Setting>
+    <Setting Name="AddrFormatIsHex" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">True</Value>
+    </Setting>
   </Settings>
 </SettingsFile>

@@ -202,5 +202,29 @@ namespace Modbus.Common.Properties {
                 this["LastDataDirectory"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("LE")]
+        public global::Modbus.Common.BCL.Endianness FPTEndianness {
+            get {
+                return ((global::Modbus.Common.BCL.Endianness)(this["FPTEndianness"]));
+            }
+            set {
+                this["FPTEndianness"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
+        public bool AddrFormatIsHex {
+            get {
+                return ((bool)(this["AddrFormatIsHex"]));
+            }
+            set {
+                this["AddrFormatIsHex"] = value;
+            }
+        }
     }
 }

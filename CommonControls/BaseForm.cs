@@ -11,11 +11,14 @@ using System.Xml.Serialization;
 using System.Windows.Forms;
 using System.ComponentModel;
 using System.Linq;
+using System.Collections.Generic;
 using static System.Windows.Forms.LinkLabel;
 using System.Threading;
 
 namespace Modbus.Common
 {
+    using BCL;
+
     [Flags]
     public enum BusState : short
     {
@@ -64,6 +67,9 @@ namespace Modbus.Common
          */
         private string _lastDataDir;
 
+        /** default/prefered endianness for floating-point */
+        private Endianness _fptEndianDefault = Endianness.LE;
+
         /// <summary>
         /// Wrap some instance methods into a delegate
         /// </summary>
@@ -83,6 +89,9 @@ namespace Modbus.Common
 
         private readonly Callers _call;
 
+        private ArithmeticValueFormat addrValueFormat 
+            => AddrFormatIsHexa ? ArithmeticValueFormat.hexa : ArithmeticValueFormat.@decimal;
+
         #region Form 
 
         /// <summary>
@@ -93,7 +102,7 @@ namespace Modbus.Common
 
         public BaseForm() : this("{Modbus window}", "{Modbus app}")
         {
-            //dumyy ctor dummy for the designer
+            //dummy ctor to make the designer happy
         }
 
         protected BaseForm(string wndBaseName, string appName, AppOptions options = null)
@@ -101,6 +110,13 @@ namespace Modbus.Common
             m_options = options ?? new AppOptions();
 
             InitializeComponent();
+            foreach (var tab in enumerateAllTabs())
+            {
+                tab.AddrIsHexaFormatted = AddrFormatIsHexa;
+                tab.FloatEncodingEndianness = _fptEndianDefault;
+                tab.OnApply += dataTab_OnApply;
+            }
+
             _registerData = new ushort[65600];
 
             _wndBaseName = wndBaseName;
@@ -113,16 +129,18 @@ namespace Modbus.Common
 
         private void BaseFormLoading(object sender, EventArgs e)
         {
+            DataTab selTab = CurrentTab;
+
             comboBoxBaudRate.SelectedIndex = 4;
             FillRTUDropDownLists();
-            CurrentTab.RegisterData = _registerData;
+            selTab.RegisterData = _registerData;
             if (_registerData == null)
             {
                 throw new ApplicationException("Failed to allocate 128k block");
             }
+
+            bool need_update = true;
             LoadUserData();
-            CurrentTab.DisplayFormat = DisplayFormat;
-            refreshData();
 
             //if options plan a target endpoint specification to be used, .... we use it -------------
 
@@ -153,10 +171,14 @@ namespace Modbus.Common
                 else
                 {
                     importDataTable(dtable, notice:false);
+                    need_update = false;
                 }
             }
 
+            if (need_update) lock (_dataLock) refreshData();
+
             _isLoaded = true;
+
             m_connState = BusState.off;
             updateWindowCaption();
 
@@ -193,7 +215,7 @@ namespace Modbus.Common
             comboBoxParity.Items.Add(Parity.Space.ToString());
         }
 
-        private void LoadUserData()
+        protected virtual void LoadUserData()
         {
             CommunicationMode mode;
             if (Enum.TryParse(Properties.Settings.Default.CommunicationMode, out mode))
@@ -214,6 +236,7 @@ namespace Modbus.Common
             SlaveDelay = Properties.Settings.Default.SlaveDelay;
             DataBits = Properties.Settings.Default.DataBits;
             StopBits = Properties.Settings.Default.StopBits;
+            _fptEndianDefault = Properties.Settings.Default.FPTEndianness;
 
             _lastDataDir = Properties.Settings.Default.LastDataDirectory;
             if (string.IsNullOrWhiteSpace(_lastDataDir)) _lastDataDir = Directory.GetCurrentDirectory();
@@ -234,7 +257,9 @@ namespace Modbus.Common
             Properties.Settings.Default.SlaveDelay = SlaveDelay;
             Properties.Settings.Default.DataBits = DataBits;
             Properties.Settings.Default.StopBits = StopBits;
+            Properties.Settings.Default.FPTEndianness = _fptEndianDefault;
             Properties.Settings.Default.LastDataDirectory = _lastDataDir;
+            Properties.Settings.Default.AddrFormatIsHex = AddrFormatIsHexa;
 
             Properties.Settings.Default.Save();
         }
@@ -329,7 +354,8 @@ namespace Modbus.Common
                         }
                         else if (value.Contains("."))
                         {
-                            //floating-point have been stored with neutral culture
+                            //floating-point have been stored with neutral culture (decimal symbol being '.')
+
                             fmt = DisplayFormat.Float32;
                             is32bit = true;
                         }
@@ -492,7 +518,7 @@ namespace Modbus.Common
                     radioButtonLED.Checked = true;
                     break;
                 case DisplayFormat.Float32:
-                    radioButtonReverseFloat.Checked = true;
+                    radioBtnFloat32.Checked = true;
                     break;
             }
         }
@@ -501,25 +527,26 @@ namespace Modbus.Common
         {
             int offset = StartAddress;
             int end = StartAddress + DataLength;
+            Endianness endian = CurrentTab.FloatEncodingEndianness;
             bool is32bit = false;
 
             string suffix = "-";
             switch (DisplayFormat)
             {
                 case DisplayFormat.Integer:
-                    suffix = "_Decimal_";
+                    suffix = "_DEC_";
                     break;
                 case DisplayFormat.Hex:
                     suffix = "_HEX_";
                     break;
                 case DisplayFormat.Binary:
-                    suffix = "_Binary_";
+                    suffix = "_BIN_";
                     break;
                 case DisplayFormat.LED:
                     suffix = "_LED_";
                     break;
                 case DisplayFormat.Float32:
-                    suffix = "_Fpt_";
+                    suffix = "_FPT_";
                     is32bit = true;
                     break;
             }
@@ -538,7 +565,7 @@ namespace Modbus.Common
                 {
                     using (var w = new StreamWriter(s))
                     {
-                        ushort regCount = (ushort)(DisplayFormat.Float32 == DisplayFormat ? 2 : 1);
+                        ushort regCount = (ushort)(DisplayFormat == DisplayFormat.Float32 ? 2 : 1);
 
                         while(offset < end)
                         {
@@ -546,7 +573,7 @@ namespace Modbus.Common
                             w.Write(':');
 
                             ushort data;
-                            switch (DisplayFormat)
+                            switch (_displayFormat)
                             {
                                 case DisplayFormat.Integer:
                                     data = _registerData[offset];
@@ -557,7 +584,8 @@ namespace Modbus.Common
                                     w.Write(string.Format("0x{0:x4}", data));
                                     break;
                                 case DisplayFormat.Float32:
-                                    float f32 = Marshaller.FloatFromBinary(new ArraySegment<ushort>(_registerData, offset, 2), Endianness.BE);
+                                    var fdata = new ArraySegment<ushort>(_registerData, offset, 2);
+                                    float f32 = Marshaller.FloatFromBinary(fdata, endian);
                                     w.Write(f32.ToString("E9", CultureInfo.InvariantCulture));
                                     break;
                                 case DisplayFormat.Binary:
@@ -621,12 +649,26 @@ namespace Modbus.Common
                 var rb = (RadioButton)sender;
                 if (rb.Checked)
                 {
-                    DisplayFormat.TryParse(rb.Tag.ToString(), true, out _displayFormat);
+                    if (!Enum.TryParse(rb.Tag.ToString(), true, out DisplayFormat fmt)) return;
+                    if (fmt == _displayFormat) return; //noop
+                    else _displayFormat = fmt;
+
                     CurrentTab.DisplayFormat = DisplayFormat;
+
+                    //swap endianness option is irrelevant for non word-extended data
+                    checkSwapFloatEndian.Enabled = DisplayFormat == DisplayFormat.Float32;
+
+                    //be sure we are not swapped by oversight (default should be equal to the settled encodineg)
+                    if (DisplayFormat == DisplayFormat.Float32) checkSwapFloatEndian.Checked = false;
 
                     lock(_dataLock) refreshData();
                 }
             }
+        }
+
+        private void onChangeSwapFloatEndian(object sender, EventArgs e)
+        {
+            CurrentTab.SwapFloatEndianness(checkSwapFloatEndian.Checked);
         }
 
         #endregion
@@ -644,7 +686,7 @@ namespace Modbus.Common
             {
                 CurrentTab.StartAddress = value;
                 var tab = tabControl1.SelectedTab;
-                tab.Text = value.ToString();
+                tab.Text = FormattedValue.Format(value, addrValueFormat);
                 _startAddress = value;
             }
         }
@@ -671,11 +713,7 @@ namespace Modbus.Common
             set
             {
                 showDataLength = value;
-                foreach (var tab in tabPage1.Controls.OfType<DataTab>())
-                {
-                    tab.ShowDataLength = value;
-                }
-                foreach (var tab in tabPage2.Controls.OfType<DataTab>())
+                foreach (var tab in enumerateAllTabs())
                 {
                     tab.ShowDataLength = value;
                 }
@@ -880,12 +918,12 @@ namespace Modbus.Common
                         radioButtonInteger.Checked = true;
                         break;
                     case DisplayFormat.Float32:
-                        radioButtonReverseFloat.Checked = true;
+                        radioBtnFloat32.Checked = true;
                         break;
                 }
+
                 _displayFormat = value;
                 CurrentTab.DisplayFormat = DisplayFormat;
-                lock(_dataLock) refreshData();
             }
         }
 
@@ -909,6 +947,12 @@ namespace Modbus.Common
                 _communicationMode = value;
             }
         }
+
+        /// <summary>
+        /// How address registers should be formatted.<br/>
+        /// if an explicit option has been provided with at runtime, use it ... else use the last value
+        /// </summary>
+        public bool AddrFormatIsHexa => m_options.AddrFormatDefaultIsHexa ?? Properties.Settings.Default.AddrFormatIsHex;
 
         #endregion
 
@@ -1009,8 +1053,8 @@ namespace Modbus.Common
         {
             get
             {
-                var tab = tabControl1.SelectedTab;
-                return tab.Controls.OfType<DataTab>().First();
+                var page = tabControl1.SelectedTab;
+                return page.Controls.OfType<DataTab>().First();
             }
         }
 
@@ -1026,10 +1070,6 @@ namespace Modbus.Common
                 return;
             }
             CurrentTab.RefreshData();
-
-            //  Reset event handler
-            CurrentTab.OnApply -= dataTab_OnApply;
-            CurrentTab.OnApply += dataTab_OnApply;
         }
 
         /// <summary>
@@ -1155,15 +1195,24 @@ namespace Modbus.Common
 
         #endregion
 
+        private IEnumerable<DataTab> enumerateAllTabs()
+        {
+            return tabControl1.Controls.OfType<TabPage>().SelectMany(p => p.Controls.OfType<DataTab>());
+        }
+
         private void tabControl1_Selected(object sender, TabControlEventArgs e)
         {
             lock (_dataLock)
             {
-                CurrentTab.RegisterData = _registerData;
-                CurrentTab.DisplayFormat = DisplayFormat;
-                var tab = tabControl1.SelectedTab;
-                if (tab.Text.Equals("...") && tabControl1.TabPages.Count < 20)
+                var selPage = tabControl1.SelectedTab;
+                var selTab = CurrentTab;
+
+                selTab.RegisterData = _registerData;
+
+                if (selPage.Text.Equals("...") && tabControl1.TabPages.Count < 20)
                 {
+                    //prepare next tab --------------
+
                     DataTab dataTab = new DataTab();
                     dataTab.DataLength = 256;
                     dataTab.DisplayFormat = DisplayFormat.Integer;
@@ -1175,6 +1224,9 @@ namespace Modbus.Common
                     dataTab.StartAddress = 0;
                     dataTab.TabIndex = 0;
                     dataTab.OnApply += dataTab_OnApply;
+                    dataTab.AddrIsHexaFormatted = AddrFormatIsHexa;
+                    dataTab.FloatEncodingEndianness = _fptEndianDefault;
+
                     TabPage tabPage = new TabPage();
                     tabPage.Controls.Add(dataTab);
                     tabPage.Location = new Point(4, 22);
@@ -1186,10 +1238,17 @@ namespace Modbus.Common
                     tabPage.UseVisualStyleBackColor = true;
                     tabControl1.Controls.Add(tabPage);
                 }
-                var address = CurrentTab.StartAddress;
-                tab.Text = address.ToString();
+
+                //select the active tab format into the main ui
+                DisplayFormat = selTab.DisplayFormat;
+
+                var address = selTab.StartAddress;
+                selPage.Text = FormattedValue.Format(address, addrValueFormat);
                 _startAddress = address;
-                _dataLength = CurrentTab.DataLength;
+                _dataLength = selTab.DataLength;
+
+                //needs to update since the register values may have been modified from another tab
+                updateDataTable();
             }
         }
 
@@ -1197,7 +1256,7 @@ namespace Modbus.Common
         {
             var tab = tabControl1.SelectedTab;
             var address = CurrentTab.StartAddress;
-            tab.Text = address.ToString();
+            tab.Text = FormattedValue.Format(address, addrValueFormat);
             _startAddress = address;
             _dataLength = CurrentTab.DataLength;
         }
@@ -1447,5 +1506,6 @@ namespace Modbus.Common
             dlg.DefaultExt = $".{ext}";
             dlg.FileName = fname;
         }
+
     }
 }

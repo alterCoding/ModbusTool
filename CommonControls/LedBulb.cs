@@ -17,6 +17,9 @@ namespace Modbus.Common {
 		#region Public and Private Members
 
 		private Color _color;
+		private Color _disabledColor;
+		private Color _disabledDarkColor;
+
 		private bool _on = true;
 
 		/// <summary>
@@ -29,6 +32,8 @@ namespace Modbus.Common {
 				_color = value;
 				this.DarkColor = ControlPaint.Dark(_color);
 				this.DarkDarkColor = ControlPaint.DarkDark(_color);
+				this._disabledColor = ControlPaint.LightLight(_color);
+				this._disabledDarkColor = ControlPaint.Light(_color);
 				this.Invalidate();	// Redraw the control
 			} 
 		}
@@ -90,7 +95,8 @@ namespace Modbus.Common {
 				// Draw the control
 				drawControl(g);
 				// Draw the image to the screen
-				e.Graphics.DrawImageUnscaled(offScreenBmp, 0, 0);
+				if(Enabled) e.Graphics.DrawImageUnscaled(offScreenBmp, 0, 0);
+				else ControlPaint.DrawImageDisabled(e.Graphics, offScreenBmp, 0, 0, Color.Empty);
 			}
 		}
 
@@ -99,8 +105,12 @@ namespace Modbus.Common {
 		/// </summary>
 		/// <param name="g"></param>
 		private void drawControl(Graphics g) {
-			Color lightColor = (this.On)? this.Color : this.DarkColor;
-			Color darkColor = (this.On) ? this.DarkColor : this.DarkDarkColor;
+
+            //if disabled and ON, use lighter colors to get the best differential rendering that occured with the dimmed
+			//color process (disabled state). By default, the ControlPaint.DrawImageDisabled() renders a bit too dark
+			//image (leading to no real discrimination between the on/off states)
+            Color lightColor = (this.On)? (this.Enabled ? this.Color : _disabledColor) : this.DarkColor; 
+			Color darkColor = (this.On) ? (this.Enabled ? this.DarkColor : _disabledDarkColor) : this.DarkDarkColor;
 			
 			Rectangle paddedRectangle = new Rectangle(this.Padding.Left, this.Padding.Top, this.Width - (this.Padding.Left + this.Padding.Right), this.Height - (this.Padding.Top + this.Padding.Bottom));
 			int width = (paddedRectangle.Width < paddedRectangle.Height) ? paddedRectangle.Width : paddedRectangle.Height;

@@ -31,6 +31,11 @@ namespace Modbus.Common
         /// </summary>
         public string DataTableFilePath { get; private set; } = string.Empty;
 
+        /// <summary>
+        /// Modbus registers addresses are formatted in hexa by default
+        /// </summary>
+        public bool? AddrFormatDefaultIsHexa { get; private set; }
+
         public static AppOptions FromCommandLine()
         {
             var options = new AppOptions();
@@ -45,6 +50,8 @@ namespace Modbus.Common
                     options.AutoStart = string.IsNullOrWhiteSpace(a.Value) || Convert.ToBoolean(a.Value);
                 else if (a.Key == _dataTableParameter)
                     options.DataTableFilePath = a.Value;
+                else if (a.Key == _addrFormatHex)
+                    options.AddrFormatDefaultIsHexa =string.IsNullOrWhiteSpace(a.Value) || Convert.ToBoolean(a.Value);
                 else
                     Debug.WriteLine($"'{a.Key}' is not a command line expected argument");
             }
@@ -55,5 +62,6 @@ namespace Modbus.Common
         public static readonly string _endpointParameter = "with-device";
         public static readonly string _dataTableParameter = "with-datatable";
         public static readonly string _autoStart = "autostart";
+        public static readonly string _addrFormatHex = "hexAddr";
     }
 }

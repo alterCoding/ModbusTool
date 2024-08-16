@@ -36,11 +36,12 @@
             this.txtStartAdress = new System.Windows.Forms.TextBox();
             this.buttonClear = new System.Windows.Forms.Button();
             this.groupBoxData = new System.Windows.Forms.GroupBox();
-            this.paneFloat32 = new System.Windows.Forms.GroupBox();
-            this.radioFloat32LE = new System.Windows.Forms.RadioButton();
-            this.radioFloat32BE = new System.Windows.Forms.RadioButton();
+            this.paneFloatEncoding = new System.Windows.Forms.GroupBox();
+            this.chkSwapBuffer = new System.Windows.Forms.CheckBox();
+            this.radioFloatLE = new System.Windows.Forms.RadioButton();
+            this.radioFloatBE = new System.Windows.Forms.RadioButton();
             this.groupBox1.SuspendLayout();
-            this.paneFloat32.SuspendLayout();
+            this.paneFloatEncoding.SuspendLayout();
             this.SuspendLayout();
             // 
             // groupBox1
@@ -52,10 +53,12 @@
             this.groupBox1.Controls.Add(this.txtStartAdress);
             this.groupBox1.Controls.Add(this.buttonClear);
             this.groupBox1.Controls.Add(this.groupBoxData);
-            this.groupBox1.Controls.Add(this.paneFloat32);
-            this.groupBox1.Location = new System.Drawing.Point(3, 3);
+            this.groupBox1.Controls.Add(this.paneFloatEncoding);
+            this.groupBox1.Location = new System.Drawing.Point(1, 1);
+            this.groupBox1.Margin = new System.Windows.Forms.Padding(1);
             this.groupBox1.Name = "groupBox1";
-            this.groupBox1.Size = new System.Drawing.Size(833, 386);
+            this.groupBox1.Padding = new System.Windows.Forms.Padding(1);
+            this.groupBox1.Size = new System.Drawing.Size(848, 386);
             this.groupBox1.TabIndex = 33;
             this.groupBox1.TabStop = false;
             // 
@@ -86,6 +89,7 @@
             this.txtSize.Text = "64";
             this.txtSize.TextAlign = System.Windows.Forms.HorizontalAlignment.Right;
             this.txtSize.TextChanged += new System.EventHandler(this.txtSize_TextChanged);
+            this.txtSize.KeyPress += new System.Windows.Forms.KeyPressEventHandler(this.onRegCountKeyPress);
             // 
             // label11
             // 
@@ -119,57 +123,70 @@
             | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
             this.groupBoxData.Location = new System.Drawing.Point(0, 44);
+            this.groupBoxData.Margin = new System.Windows.Forms.Padding(1);
             this.groupBoxData.Name = "groupBoxData";
-            this.groupBoxData.Size = new System.Drawing.Size(833, 332);
+            this.groupBoxData.Size = new System.Drawing.Size(848, 336);
             this.groupBoxData.TabIndex = 17;
             this.groupBoxData.TabStop = false;
             // 
-            // paneFloat32
+            // paneFloatEncoding
             // 
-            this.paneFloat32.Controls.Add(this.radioFloat32LE);
-            this.paneFloat32.Controls.Add(this.radioFloat32BE);
-            this.paneFloat32.Location = new System.Drawing.Point(402, 8);
-            this.paneFloat32.Name = "paneFloat32";
-            this.paneFloat32.Size = new System.Drawing.Size(115, 37);
-            this.paneFloat32.TabIndex = 3;
-            this.paneFloat32.TabStop = false;
-            this.paneFloat32.Text = "Float32 endianness";
+            this.paneFloatEncoding.Controls.Add(this.chkSwapBuffer);
+            this.paneFloatEncoding.Controls.Add(this.radioFloatLE);
+            this.paneFloatEncoding.Controls.Add(this.radioFloatBE);
+            this.paneFloatEncoding.Location = new System.Drawing.Point(402, 8);
+            this.paneFloatEncoding.Name = "paneFloatEncoding";
+            this.paneFloatEncoding.Size = new System.Drawing.Size(197, 37);
+            this.paneFloatEncoding.TabIndex = 3;
+            this.paneFloatEncoding.TabStop = false;
+            this.paneFloatEncoding.Text = "Float encoding";
             // 
-            // radioFloat32LE
+            // chkSwapBuffer
             // 
-            this.radioFloat32LE.AutoSize = true;
-            this.radioFloat32LE.Enabled = false;
-            this.radioFloat32LE.Location = new System.Drawing.Point(62, 17);
-            this.radioFloat32LE.Name = "radioFloat32LE";
-            this.radioFloat32LE.Size = new System.Drawing.Size(38, 17);
-            this.radioFloat32LE.TabIndex = 2;
-            this.radioFloat32LE.Text = "LE";
-            this.radioFloat32LE.UseVisualStyleBackColor = true;
+            this.chkSwapBuffer.AutoSize = true;
+            this.chkSwapBuffer.Checked = true;
+            this.chkSwapBuffer.CheckState = System.Windows.Forms.CheckState.Checked;
+            this.chkSwapBuffer.Location = new System.Drawing.Point(104, 17);
+            this.chkSwapBuffer.Name = "chkSwapBuffer";
+            this.chkSwapBuffer.Size = new System.Drawing.Size(83, 17);
+            this.chkSwapBuffer.TabIndex = 3;
+            this.chkSwapBuffer.Text = "Swap buffer";
+            this.chkSwapBuffer.UseVisualStyleBackColor = true;
             // 
-            // radioFloat32BE
+            // radioFloatLE
             // 
-            this.radioFloat32BE.AutoSize = true;
-            this.radioFloat32BE.Checked = true;
-            this.radioFloat32BE.Enabled = false;
-            this.radioFloat32BE.Location = new System.Drawing.Point(8, 17);
-            this.radioFloat32BE.Name = "radioFloat32BE";
-            this.radioFloat32BE.Size = new System.Drawing.Size(39, 17);
-            this.radioFloat32BE.TabIndex = 1;
-            this.radioFloat32BE.TabStop = true;
-            this.radioFloat32BE.Text = "BE";
-            this.radioFloat32BE.UseVisualStyleBackColor = true;
+            this.radioFloatLE.AutoSize = true;
+            this.radioFloatLE.Location = new System.Drawing.Point(47, 17);
+            this.radioFloatLE.Name = "radioFloatLE";
+            this.radioFloatLE.Size = new System.Drawing.Size(38, 17);
+            this.radioFloatLE.TabIndex = 2;
+            this.radioFloatLE.Text = "LE";
+            this.radioFloatLE.UseVisualStyleBackColor = true;
+            this.radioFloatLE.CheckedChanged += new System.EventHandler(this.onFloatLEChanged);
+            // 
+            // radioFloatBE
+            // 
+            this.radioFloatBE.AutoSize = true;
+            this.radioFloatBE.Location = new System.Drawing.Point(8, 17);
+            this.radioFloatBE.Name = "radioFloatBE";
+            this.radioFloatBE.Size = new System.Drawing.Size(39, 17);
+            this.radioFloatBE.TabIndex = 1;
+            this.radioFloatBE.Text = "BE";
+            this.radioFloatBE.UseVisualStyleBackColor = true;
+            this.radioFloatBE.CheckedChanged += new System.EventHandler(this.onFloatBEChanged);
             // 
             // DataTab
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.Controls.Add(this.groupBox1);
+            this.Margin = new System.Windows.Forms.Padding(0);
             this.Name = "DataTab";
-            this.Size = new System.Drawing.Size(840, 395);
+            this.Size = new System.Drawing.Size(850, 395);
             this.groupBox1.ResumeLayout(false);
             this.groupBox1.PerformLayout();
-            this.paneFloat32.ResumeLayout(false);
-            this.paneFloat32.PerformLayout();
+            this.paneFloatEncoding.ResumeLayout(false);
+            this.paneFloatEncoding.PerformLayout();
             this.ResumeLayout(false);
 
         }
@@ -185,8 +202,9 @@
         protected System.Windows.Forms.Button buttonClear;
         protected System.Windows.Forms.GroupBox groupBoxData;
 
-        private System.Windows.Forms.GroupBox paneFloat32;
-        private System.Windows.Forms.RadioButton radioFloat32LE;
-        private System.Windows.Forms.RadioButton radioFloat32BE;
+        private System.Windows.Forms.GroupBox paneFloatEncoding;
+        private System.Windows.Forms.RadioButton radioFloatLE;
+        private System.Windows.Forms.RadioButton radioFloatBE;
+        private System.Windows.Forms.CheckBox chkSwapBuffer;
     }
 }

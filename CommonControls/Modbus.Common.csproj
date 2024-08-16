@@ -61,9 +61,12 @@
     <Compile Include="Endianness.cs" />
     <Compile Include="Enumerations.cs" />
     <Compile Include="FloatingPointParsing.cs" />
+    <Compile Include="MBDataItem{T}.cs" />
     <Compile Include="ParseGeneric.cs" />
     <Compile Include="BytesValueParsing.cs" />
+    <Compile Include="MBDataItem.cs" />
     <Compile Include="PrimitiveTraits.cs" />
+    <Compile Include="TextBoxHandlers.cs" />
     <Compile Include="ValueFormatting.cs" />
     <Compile Include="FormattedValue.cs" />
     <Compile Include="PrimitiveFormatter.cs" />
@@ -78,6 +81,7 @@
       <DependentUpon>BaseForm.cs</DependentUpon>
     </Compile>
     <Compile Include="Marshaller.cs" />
+    <Compile Include="ModbusRegistersBuffer.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Properties\Resources.Designer.cs">
       <AutoGen>True</AutoGen>

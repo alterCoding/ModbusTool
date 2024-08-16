@@ -42,11 +42,6 @@
             // 
             this.groupBox3.Size = new System.Drawing.Size(189, 110);
             // 
-            // radioButtonInteger
-            // 
-            this.radioButtonInteger.Location = new System.Drawing.Point(86, 20);
-            this.radioButtonInteger.Size = new System.Drawing.Size(64, 21);
-            // 
             // label1
             // 
             this.label1.Visible = false;
@@ -54,10 +49,6 @@
             // textBoxSlaveDelay
             // 
             this.textBoxSlaveDelay.Visible = false;
-            // 
-            // radioButtonReverseFloat
-            // 
-            this.radioButtonReverseFloat.Location = new System.Drawing.Point(86, 40);
             // 
             // groupBoxFunctions
             // 
@@ -189,7 +180,7 @@
             this.btnConnect.TabIndex = 36;
             this.btnConnect.Text = "Connect";
             this.btnConnect.Click += new System.EventHandler(this.BtnConnectClick);
-           // 
+            // 
             // MasterForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
@@ -203,6 +194,8 @@
             this.Text = "Modbus Master";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.MasterFormClosing);
             this.Load += new System.EventHandler(this.MasterForm_Load);
+            this.Controls.SetChildIndex(this.label1, 0);
+            this.Controls.SetChildIndex(this.textBoxSlaveDelay, 0);
             this.Controls.SetChildIndex(this.tabControl1, 0);
             this.Controls.SetChildIndex(this.grpExchange, 0);
             this.Controls.SetChildIndex(this.groupBox3, 0);
@@ -212,8 +205,11 @@
             this.Controls.SetChildIndex(this.btnConnect, 0);
             this.Controls.SetChildIndex(this.buttonDisconnect, 0);
             this.groupBox4.ResumeLayout(false);
+            this.groupBox4.PerformLayout();
             this.groupBox3.ResumeLayout(false);
+            this.groupBox3.PerformLayout();
             this.grpStart.ResumeLayout(false);
+            this.grpStart.PerformLayout();
             this.groupBoxRTU.ResumeLayout(false);
             this.groupBoxRTU.PerformLayout();
             this.groupBoxMode.ResumeLayout(false);
@@ -221,10 +217,10 @@
             this.groupBoxTCP.ResumeLayout(false);
             this.groupBoxTCP.PerformLayout();
             this.grpExchange.ResumeLayout(false);
-            this.grpExchange.PerformLayout();
             this.groupBoxFunctions.ResumeLayout(false);
             this.groupBoxFunctions.PerformLayout();
             this.ResumeLayout(false);
+            this.PerformLayout();
 
         }
 

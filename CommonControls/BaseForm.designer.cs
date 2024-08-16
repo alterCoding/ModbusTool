@@ -39,8 +39,9 @@
             this.label7 = new System.Windows.Forms.Label();
             this.textBoxSlaveID = new System.Windows.Forms.TextBox();
             this.groupBox3 = new System.Windows.Forms.GroupBox();
+            this.checkSwapFloatEndian = new System.Windows.Forms.CheckBox();
             this.radioButtonLED = new System.Windows.Forms.RadioButton();
-            this.radioButtonReverseFloat = new System.Windows.Forms.RadioButton();
+            this.radioBtnFloat32 = new System.Windows.Forms.RadioButton();
             this.radioButtonInteger = new System.Windows.Forms.RadioButton();
             this.radioButtonHex = new System.Windows.Forms.RadioButton();
             this.radioButtonBinary = new System.Windows.Forms.RadioButton();
@@ -207,8 +208,9 @@
             // 
             // groupBox3
             // 
+            this.groupBox3.Controls.Add(this.checkSwapFloatEndian);
             this.groupBox3.Controls.Add(this.radioButtonLED);
-            this.groupBox3.Controls.Add(this.radioButtonReverseFloat);
+            this.groupBox3.Controls.Add(this.radioBtnFloat32);
             this.groupBox3.Controls.Add(this.radioButtonInteger);
             this.groupBox3.Controls.Add(this.radioButtonHex);
             this.groupBox3.Controls.Add(this.radioButtonBinary);
@@ -219,9 +221,21 @@
             this.groupBox3.TabStop = false;
             this.groupBox3.Text = "Display Format";
             // 
+            // checkSwapFloatEndian
+            // 
+            this.checkSwapFloatEndian.AutoSize = true;
+            this.checkSwapFloatEndian.Enabled = false;
+            this.checkSwapFloatEndian.Location = new System.Drawing.Point(80, 68);
+            this.checkSwapFloatEndian.Name = "checkSwapFloatEndian";
+            this.checkSwapFloatEndian.Size = new System.Drawing.Size(88, 17);
+            this.checkSwapFloatEndian.TabIndex = 6;
+            this.checkSwapFloatEndian.Text = "Swap endian";
+            this.checkSwapFloatEndian.UseVisualStyleBackColor = true;
+            this.checkSwapFloatEndian.CheckedChanged += new System.EventHandler(this.onChangeSwapFloatEndian);
+            // 
             // radioButtonLED
             // 
-            this.radioButtonLED.Location = new System.Drawing.Point(13, 19);
+            this.radioButtonLED.Location = new System.Drawing.Point(10, 19);
             this.radioButtonLED.Name = "radioButtonLED";
             this.radioButtonLED.Size = new System.Drawing.Size(67, 21);
             this.radioButtonLED.TabIndex = 1;
@@ -229,20 +243,20 @@
             this.radioButtonLED.Text = "LED";
             this.radioButtonLED.Click += new System.EventHandler(this.RadioButtonDisplayFormatCheckedChanged);
             // 
-            // radioButtonReverseFloat
+            // radioBtnFloat32
             // 
-            this.radioButtonReverseFloat.Location = new System.Drawing.Point(102, 40);
-            this.radioButtonReverseFloat.Name = "radioButtonReverseFloat";
-            this.radioButtonReverseFloat.Size = new System.Drawing.Size(90, 21);
-            this.radioButtonReverseFloat.TabIndex = 5;
-            this.radioButtonReverseFloat.Tag = "Float32";
-            this.radioButtonReverseFloat.Text = "Float32";
-            this.radioButtonReverseFloat.Click += new System.EventHandler(this.RadioButtonDisplayFormatCheckedChanged);
+            this.radioBtnFloat32.Location = new System.Drawing.Point(10, 65);
+            this.radioBtnFloat32.Name = "radioBtnFloat32";
+            this.radioBtnFloat32.Size = new System.Drawing.Size(62, 21);
+            this.radioBtnFloat32.TabIndex = 5;
+            this.radioBtnFloat32.Tag = "Float32";
+            this.radioBtnFloat32.Text = "Float32";
+            this.radioBtnFloat32.Click += new System.EventHandler(this.RadioButtonDisplayFormatCheckedChanged);
             // 
             // radioButtonInteger
             // 
             this.radioButtonInteger.Checked = true;
-            this.radioButtonInteger.Location = new System.Drawing.Point(102, 19);
+            this.radioButtonInteger.Location = new System.Drawing.Point(80, 19);
             this.radioButtonInteger.Name = "radioButtonInteger";
             this.radioButtonInteger.Size = new System.Drawing.Size(67, 21);
             this.radioButtonInteger.TabIndex = 4;
@@ -253,19 +267,19 @@
             // 
             // radioButtonHex
             // 
-            this.radioButtonHex.Location = new System.Drawing.Point(13, 61);
+            this.radioButtonHex.Location = new System.Drawing.Point(80, 42);
             this.radioButtonHex.Name = "radioButtonHex";
             this.radioButtonHex.Size = new System.Drawing.Size(67, 20);
             this.radioButtonHex.TabIndex = 3;
             this.radioButtonHex.Tag = "Hex";
-            this.radioButtonHex.Text = "Hex";
+            this.radioButtonHex.Text = "Hexa";
             this.radioButtonHex.Click += new System.EventHandler(this.RadioButtonDisplayFormatCheckedChanged);
             // 
             // radioButtonBinary
             // 
-            this.radioButtonBinary.Location = new System.Drawing.Point(13, 40);
+            this.radioButtonBinary.Location = new System.Drawing.Point(10, 42);
             this.radioButtonBinary.Name = "radioButtonBinary";
-            this.radioButtonBinary.Size = new System.Drawing.Size(67, 21);
+            this.radioButtonBinary.Size = new System.Drawing.Size(61, 21);
             this.radioButtonBinary.TabIndex = 2;
             this.radioButtonBinary.Tag = "Binary";
             this.radioButtonBinary.Text = "Binary";
@@ -598,11 +612,12 @@
             this.tabControl1.Controls.Add(this.tabPage1);
             this.tabControl1.Controls.Add(this.tabPage2);
             this.tabControl1.DrawMode = System.Windows.Forms.TabDrawMode.OwnerDrawFixed;
-            this.tabControl1.Location = new System.Drawing.Point(7, 260);
+            this.tabControl1.Location = new System.Drawing.Point(5, 260);
+            this.tabControl1.Margin = new System.Windows.Forms.Padding(0, 3, 0, 3);
             this.tabControl1.Name = "tabControl1";
-            this.tabControl1.Padding = new System.Drawing.Point(12, 3);
+            this.tabControl1.Padding = new System.Drawing.Point(10, 3);
             this.tabControl1.SelectedIndex = 0;
-            this.tabControl1.Size = new System.Drawing.Size(859, 437);
+            this.tabControl1.Size = new System.Drawing.Size(862, 437);
             this.tabControl1.TabIndex = 35;
             this.tabControl1.Selected += new System.Windows.Forms.TabControlEventHandler(this.tabControl1_Selected);
             // 
@@ -610,47 +625,49 @@
             // 
             this.tabPage1.Controls.Add(dataTab1);
             this.tabPage1.Location = new System.Drawing.Point(4, 22);
+            this.tabPage1.Margin = new System.Windows.Forms.Padding(0);
             this.tabPage1.Name = "tabPage1";
-            this.tabPage1.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage1.Size = new System.Drawing.Size(851, 411);
+            this.tabPage1.Size = new System.Drawing.Size(854, 411);
             this.tabPage1.TabIndex = 0;
             this.tabPage1.Text = "Address1";
             this.tabPage1.UseVisualStyleBackColor = true;
             // 
             // dataTab1
             // 
-            dataTab1.DataLength = ((ushort)(127));
+            dataTab1.DataLength = ((ushort)(125));
             dataTab1.DisplayFormat = Modbus.Common.DisplayFormat.Integer;
             dataTab1.Location = new System.Drawing.Point(3, 3);
+            dataTab1.Margin = new System.Windows.Forms.Padding(0);
             dataTab1.Name = "dataTab1";
             dataTab1.RegisterData = new ushort[0];
             dataTab1.ShowDataLength = false;
-            dataTab1.Size = new System.Drawing.Size(839, 406);
-            dataTab1.StartAddress = ((ushort)(4100));
+            dataTab1.Size = new System.Drawing.Size(842, 406);
+            dataTab1.StartAddress = 0;
             dataTab1.TabIndex = 0;
             // 
             // tabPage2
             // 
             this.tabPage2.Controls.Add(dataTab2);
             this.tabPage2.Location = new System.Drawing.Point(4, 22);
+            this.tabPage2.Margin = new System.Windows.Forms.Padding(0);
             this.tabPage2.Name = "tabPage2";
-            this.tabPage2.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage2.Size = new System.Drawing.Size(851, 411);
+            this.tabPage2.Size = new System.Drawing.Size(852, 411);
             this.tabPage2.TabIndex = 1;
             this.tabPage2.Text = "...";
             this.tabPage2.UseVisualStyleBackColor = true;
             // 
             // dataTab2
             // 
-            dataTab2.DataLength = ((ushort)(127));
-            dataTab2.DisplayFormat = Modbus.Common.DisplayFormat.LED;
+            dataTab2.DataLength = ((ushort)(125));
+            dataTab2.DisplayFormat = Modbus.Common.DisplayFormat.Integer;
             dataTab2.Location = new System.Drawing.Point(3, 3);
+            dataTab2.Margin = new System.Windows.Forms.Padding(0);
             dataTab2.Name = "dataTab2";
             dataTab2.RegisterData = new ushort[] {
         ((ushort)(0))};
             dataTab2.ShowDataLength = false;
             dataTab2.Size = new System.Drawing.Size(839, 406);
-            dataTab2.StartAddress = ((ushort)(4100));
+            dataTab2.StartAddress = 0;
             dataTab2.TabIndex = 0;
             // 
             // BaseForm
@@ -676,6 +693,7 @@
             this.groupBox4.ResumeLayout(false);
             this.groupBox4.PerformLayout();
             this.groupBox3.ResumeLayout(false);
+            this.groupBox3.PerformLayout();
             this.grpStart.ResumeLayout(false);
             this.grpStart.PerformLayout();
             this.groupBoxRTU.ResumeLayout(false);
@@ -735,7 +753,7 @@
         protected System.Windows.Forms.GroupBox grpExchange;
         protected System.Windows.Forms.Button buttonPauseLog;
         protected TabControlEx tabControl1;
-        protected System.Windows.Forms.RadioButton radioButtonReverseFloat;
+        protected System.Windows.Forms.RadioButton radioBtnFloat32;
         private System.Windows.Forms.TabPage tabPage1;
         private System.Windows.Forms.TabPage tabPage2;
         private System.Windows.Forms.Button donate;
@@ -746,5 +764,6 @@
         private System.Windows.Forms.Button btnContact;
         private System.Windows.Forms.ToolTip toolTip;
         private System.ComponentModel.IContainer components;
+        private System.Windows.Forms.CheckBox checkSwapFloatEndian;
     }
 }
